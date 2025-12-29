@@ -1,0 +1,14 @@
+{
+    "editor.mouseWheelZoom": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/legged_lab",
+        "/home/lyf/code/geoloco/IsaacLab/source/isaaclab",
+        "/home/lyf/code/geoloco/IsaacLab/source/isaaclab_assets",
+        "/home/lyf/code/geoloco/IsaacLab/source/isaaclab_mimic",
+        "/home/lyf/code/geoloco/IsaacLab/source/isaaclab_rl",
+        "/home/lyf/code/geoloco/IsaacLab/source/isaaclab_tasks",
+        "/home/lyf/code/geoloco/TienKung-Lab/rsl_rl",
+        "/home/lyf/code/geoloco/TienKung-Lab"
+    ]
+
+}

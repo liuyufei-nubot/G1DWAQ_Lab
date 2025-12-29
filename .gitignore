@@ -1,0 +1,10 @@
+*.egg-info
+*.pyc
+
+outputs
+logs
+run_bash.sh
+wandb
+MUJOCO_LOG.TXT
+.history
+IsaacLab
