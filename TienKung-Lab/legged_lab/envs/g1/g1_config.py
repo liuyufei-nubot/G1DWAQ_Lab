@@ -87,7 +87,7 @@ class G1RewardCfg(RewardCfg):
     )
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-2.0)
     joint_deviation_hip = RewTerm(
-        func=mdp.joint_deviation_l1,
+        func=mdp.joint_deviation_l1_always,  # Always penalize hip yaw/roll deviation to prevent splay-footed gait
         weight=-0.15,
         params={
             "asset_cfg": SceneEntityCfg(
@@ -105,7 +105,7 @@ class G1RewardCfg(RewardCfg):
         },
     )
     joint_deviation_legs = RewTerm(
-        func=mdp.joint_deviation_l1,
+        func=mdp.joint_deviation_l1_always,
         weight=-0.02,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_pitch.*", ".*_knee.*", ".*_ankle.*"])},
     )

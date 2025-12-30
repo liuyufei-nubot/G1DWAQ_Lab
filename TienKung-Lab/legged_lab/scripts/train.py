@@ -21,7 +21,7 @@ import argparse
 from isaaclab.app import AppLauncher
 
 from legged_lab.utils import task_registry
-from rsl_rl.runners import AmpOnPolicyRunner, OnPolicyRunner
+from rsl_rl.runners import AmpOnPolicyRunner, OnPolicyRunner, AMPOnPolicyRunnerMulti
 
 # local imports
 import legged_lab.utils.cli_args as cli_args  # isort: skip
@@ -37,8 +37,8 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
-# Start camera rendering
-if "sensor" in args_cli.task:
+# Start camera rendering for tasks that require RGB/depth sensing
+if args_cli.task and ("sensor" in args_cli.task or "rgb" in args_cli.task or "depth" in args_cli.task):
     args_cli.enable_cameras = True
 
 # launch omniverse app
@@ -92,7 +92,9 @@ def train():
     if agent_cfg.run_name:
         log_dir += f"_{agent_cfg.run_name}"
     log_dir = os.path.join(log_root_path, log_dir)
-    runner_class: OnPolicyRunner | AmpOnPolicyRunner = eval(agent_cfg.runner_class_name)
+    
+
+    runner_class = eval(agent_cfg.runner_class_name)
     runner = runner_class(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
 
     if agent_cfg.resume:

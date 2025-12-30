@@ -49,6 +49,15 @@ from legged_lab.envs.h1.h1_config import (
 )
 from legged_lab.utils.task_registry import task_registry
 
+
+
+from legged_lab.envs.g1.g1_rgb_env import G1RgbEnv
+from legged_lab.envs.g1.g1_rgb_config import (
+    G1RgbEnvCfg,
+    G1RgbAgentCfg,
+)
+
+
 task_registry.register("walk", TienKungEnv, TienKungWalkFlatEnvCfg(), TienKungWalkAgentCfg())
 task_registry.register("run", TienKungEnv, TienKungRunFlatEnvCfg(), TienKungRunAgentCfg())
 task_registry.register(
@@ -59,5 +68,6 @@ task_registry.register(
 )
 task_registry.register("h1_flat", BaseEnv, H1FlatEnvCfg(), H1FlatAgentCfg())
 task_registry.register("h1_rough", BaseEnv, H1RoughEnvCfg(), H1RoughAgentCfg())
-task_registry.register("g1_flat", G1Env, G1FlatEnvCfg(), G1FlatAgentCfg())
-task_registry.register("g1_rough", G1Env, G1RoughEnvCfg(), G1RoughAgentCfg())
+task_registry.register("g1_flat", BaseEnv, G1FlatEnvCfg(), G1FlatAgentCfg())
+task_registry.register("g1_rough", BaseEnv, G1RoughEnvCfg(), G1RoughAgentCfg())
+task_registry.register("g1_rgb", G1RgbEnv, G1RgbEnvCfg(), G1RgbAgentCfg())

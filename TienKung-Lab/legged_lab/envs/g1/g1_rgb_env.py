@@ -1,44 +1,73 @@
+# Copyright (c) 2021-2024, The RSL-RL Project Developers.
+# All rights reserved.
+# Original code is licensed under the BSD-3-Clause license.
+#
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
 # All rights reserved.
-# Original code is licensed under BSD-3-Clause.
 #
 # Copyright (c) 2025-2026, The Legged Lab Project Developers.
 # All rights reserved.
-# Modifications are licensed under BSD-3-Clause.
 #
-# This file contains code derived from Isaac Lab Project (BSD-3-Clause license)
-# with modifications by Legged Lab Project (BSD-3-Clause license).
+# Copyright (c) 2025-2026, The TienKung-Lab Project Developers.
+# All rights reserved.
+# Modifications are licensed under the BSD-3-Clause license.
+#
+# This file contains code derived from the RSL-RL, Isaac Lab, and Legged Lab Projects,
+# with additional modifications by the TienKung-Lab Project,
+# and is distributed under the BSD-3-Clause license.
+
+from __future__ import annotations
 
 import isaaclab.sim as sim_utils
 import isaacsim.core.utils.torch as torch_utils  # type: ignore
 import numpy as np
 import torch
+import os
+from PIL import Image
 from isaaclab.assets.articulation import Articulation
 from isaaclab.envs.mdp.commands import UniformVelocityCommand, UniformVelocityCommandCfg
 from isaaclab.managers import EventManager, RewardManager
 from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
 from isaaclab.scene import InteractiveScene
 from isaaclab.sensors import ContactSensor, RayCaster
+from isaaclab.sensors.camera import TiledCamera
 from isaaclab.sim import PhysxCfg, SimulationContext
 from isaaclab.utils.buffers import CircularBuffer, DelayBuffer
-from rsl_rl.env import VecEnv
 
-from legged_lab.envs.base.base_env_config import BaseEnvCfg
+from legged_lab.envs.g1.g1_config import G1FlatEnvCfg, G1RoughEnvCfg
 from legged_lab.utils.env_utils.scene import SceneCfg
+from rsl_rl.env import VecEnv
+from legged_lab.sensors.camera.rgb_camera import RgbCamera
 
+class G1RgbEnv(VecEnv):
+    """
+    G1 humanoid robot environment.
+    
+    This environment is designed for the Unitree G1 robot, following the structure
+    of TienKungEnv but using BaseEnv-style parameters without AMP or gait-phase features.
+    It supports height scanner, depth camera, and RGB camera sensors.
+    """
 
-class BaseEnv(VecEnv):
-    def __init__(self, cfg: BaseEnvCfg, headless):
-        self.cfg: BaseEnvCfg
+    def __init__(
+        self,
+        cfg: G1FlatEnvCfg | G1RoughEnvCfg ,
+        headless: bool,
+    ):
+        self.cfg: G1FlatEnvCfg | G1RoughEnvCfg 
 
         self.cfg = cfg
         self.headless = headless
         self.device = self.cfg.device
         self.physics_dt = self.cfg.sim.dt
         self.step_dt = self.cfg.sim.decimation * self.cfg.sim.dt
+        self.dt = self.step_dt  # Alias for runner compatibility
         self.num_envs = self.cfg.scene.num_envs
         self.seed(cfg.scene.seed)
+        
+        # Properties required by runner
+        self.obs_history_len = self.cfg.robot.actor_obs_history_length
 
+        # Initialize simulation context
         sim_cfg = sim_utils.SimulationCfg(
             device=cfg.device,
             dt=cfg.sim.dt,
@@ -53,15 +82,33 @@ class BaseEnv(VecEnv):
         )
         self.sim = SimulationContext(sim_cfg)
 
+        # Build scene
         scene_cfg = SceneCfg(config=cfg.scene, physics_dt=self.physics_dt, step_dt=self.step_dt)
         self.scene = InteractiveScene(scene_cfg)
         self.sim.reset()
 
+        # Get robot and sensors
         self.robot: Articulation = self.scene["robot"]
         self.contact_sensor: ContactSensor = self.scene.sensors["contact_sensor"]
+
         if self.cfg.scene.height_scanner.enable_height_scan:
             self.height_scanner: RayCaster = self.scene.sensors["height_scanner"]
 
+        # Instantiate LiDAR if enabled
+        if hasattr(self.cfg.scene, "lidar") and self.cfg.scene.lidar.enable_lidar:
+            self.lidar: RayCaster = self.scene.sensors["lidar"]
+
+        # Instantiate Depth Camera if enabled
+        if self.cfg.scene.depth_camera.enable_depth_camera:
+            self.depth_camera: TiledCamera = self.scene.sensors["depth_camera"]
+
+        # # Instantiate RGB Camera if enabled
+        if hasattr(self.cfg.scene, "rgb_camera") and self.cfg.scene.rgb_camera.enable_rgb_camera:
+            self.rgb_camera: RgbCamera = self.scene.sensors["rgb_camera"]
+        else:
+            self.rgb_camera = None
+
+        # Command generator
         command_cfg = UniformVelocityCommandCfg(
             asset_name="robot",
             resampling_time_range=self.cfg.commands.resampling_time_range,
@@ -76,7 +123,12 @@ class BaseEnv(VecEnv):
         self.reward_manager = RewardManager(self.cfg.reward, self)
 
         self.init_buffers()
-
+        # Debug: saving initial camera frames
+        # Number of frames to save from the start (per env). Set to 0 to disable.
+        self.debug_save_num = getattr(self.cfg, "debug_save_num", 10)
+        self._debug_saved_frames = 0
+        # directory to save debug frames (relative to workspace)
+        self._debug_output_dir = getattr(self.cfg, "debug_output_dir", "outputs/debug_camera_frames")
         env_ids = torch.arange(self.num_envs, device=self.device)
         self.event_manager = EventManager(self.cfg.domain_rand.events, self)
         if "startup" in self.event_manager.available_modes:
@@ -84,10 +136,8 @@ class BaseEnv(VecEnv):
         self.reset(env_ids)
 
     def init_buffers(self):
+        """Initialize all internal buffers for the environment."""
         self.extras = {}
-        
-        # Robot index for camera/viewer to follow (can be changed via keyboard)
-        self.lookat_id = 0
 
         self.max_episode_length_s = self.cfg.scene.max_episode_length_s
         self.max_episode_length = np.ceil(self.max_episode_length_s / self.step_dt)
@@ -127,9 +177,16 @@ class BaseEnv(VecEnv):
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.sim_step_counter = 0
         self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+
         self.init_obs_buffer()
+        
+        # Compute observation dimensions for runner
+        actor_obs, critic_obs = self.compute_observations()
+        self.num_obs = actor_obs.shape[1]
+        self.num_privileged_obs = critic_obs.shape[1]
 
     def compute_current_observations(self):
+        """Compute current step observations for actor and critic."""
         robot = self.robot
         net_contact_forces = self.contact_sensor.data.net_forces_w_history
 
@@ -139,6 +196,7 @@ class BaseEnv(VecEnv):
         joint_pos = robot.data.joint_pos - robot.data.default_joint_pos
         joint_vel = robot.data.joint_vel - robot.data.default_joint_vel
         action = self.action_buffer._circular_buffer.buffer[:, -1, :]
+
         current_actor_obs = torch.cat(
             [
                 ang_vel * self.obs_scales.ang_vel,
@@ -160,6 +218,7 @@ class BaseEnv(VecEnv):
         return current_actor_obs, current_critic_obs
 
     def compute_observations(self):
+        """Compute full observations including history and sensor data."""
         current_actor_obs, current_critic_obs = self.compute_current_observations()
         if self.add_noise:
             current_actor_obs += (2 * torch.rand_like(current_actor_obs) - 1) * self.noise_scale_vec
@@ -169,6 +228,8 @@ class BaseEnv(VecEnv):
 
         actor_obs = self.actor_obs_buffer.buffer.reshape(self.num_envs, -1)
         critic_obs = self.critic_obs_buffer.buffer.reshape(self.num_envs, -1)
+
+        # Height scanner observations
         if self.cfg.scene.height_scanner.enable_height_scan:
             height_scan = (
                 self.height_scanner.data.pos_w[:, 2].unsqueeze(1)
@@ -180,14 +241,46 @@ class BaseEnv(VecEnv):
                 height_scan += (2 * torch.rand_like(height_scan) - 1) * self.height_scan_noise_vec
             actor_obs = torch.cat([actor_obs, height_scan], dim=-1)
 
+        # Depth camera observations
+        # if self.cfg.scene.depth_camera.enable_depth_camera:
+        #     depth_image = self.depth_camera.data.output["distance_to_image_plane"]
+        #     # (num_envs, height, width, 1) --> (num_envs, height * width)
+        #     flattened_depth = depth_image.view(self.num_envs, -1)
+        #     actor_obs = torch.cat([actor_obs, flattened_depth], dim=-1)
+        #     critic_obs = torch.cat([critic_obs, flattened_depth], dim=-1)
+
+        # RGB camera observations
+        # if self.rgb_camera is not None:
+        #     if "rgb" in self.rgb_camera.data.output:
+        #         rgb_image = self.rgb_camera.data.output["rgb"] # (num_envs, height, width, 3)
+        #         # Flatten per-environment and append
+        #         if rgb_image.ndim == 4 and rgb_image.shape[1] in (1, 3, 4):
+        #             # (N, C, H, W) -> transpose to (N, H, W, C)
+        #             rgb_image = rgb_image.permute(0, 2, 3, 1)
+        #         flattened_rgb = rgb_image.reshape(self.num_envs, -1).float()
+        #         actor_obs = torch.cat([actor_obs, flattened_rgb], dim=-1)
+        #         critic_obs = torch.cat([critic_obs, flattened_rgb], dim=-1)
+
         actor_obs = torch.clip(actor_obs, -self.clip_obs, self.clip_obs)
         critic_obs = torch.clip(critic_obs, -self.clip_obs, self.clip_obs)
 
         return actor_obs, critic_obs
 
-    def reset(self, env_ids):
+    def reset(self, env_ids=None):
+        """Reset specified environments.
+        
+        Args:
+            env_ids: Environment indices to reset. If None, resets all environments.
+        
+        Returns:
+            Tuple of (actor_obs, extras) for runner compatibility.
+        """
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+        
         if len(env_ids) == 0:
-            return
+            actor_obs, critic_obs = self.compute_observations()
+            return actor_obs, self.extras
 
         self.extras["log"] = dict()
         if self.cfg.scene.terrain_generator is not None:
@@ -196,6 +289,15 @@ class BaseEnv(VecEnv):
                 self.extras["log"].update(terrain_levels)
 
         self.scene.reset(env_ids)
+        # # Debug: print camera and parent (link) poses to help verify mounting
+        # try:
+        #     if getattr(self, "rgb_camera", None) is not None and self._debug_saved_frames > -1:
+        #         # pick first env id to inspect
+        #         inspect_env = int(env_ids[0].item()) if hasattr(env_ids, "__len__") else int(env_ids)
+        #         self._debug_print_camera_and_parent(inspect_env)
+        # except Exception:
+        #     # don't fail reset on debug logging
+        #     pass
         if "reset" in self.event_manager.available_modes:
             self.event_manager.apply(
                 mode="reset",
@@ -216,13 +318,18 @@ class BaseEnv(VecEnv):
 
         self.scene.write_data_to_sim()
         self.sim.forward()
+        
+        # Return observations for runner compatibility
+        actor_obs, critic_obs = self.compute_observations()
+        self.extras["observations"] = {"critic": critic_obs}
+        return actor_obs, self.extras
 
     def step(self, actions: torch.Tensor):
-
+        """Execute one environment step."""
         delayed_actions = self.action_buffer.compute(actions)
 
-        cliped_actions = torch.clip(delayed_actions, -self.clip_actions, self.clip_actions).to(self.device)
-        processed_actions = cliped_actions * self.action_scale + self.robot.data.default_joint_pos
+        clipped_actions = torch.clip(delayed_actions, -self.clip_actions, self.clip_actions).to(self.device)
+        processed_actions = clipped_actions * self.action_scale + self.robot.data.default_joint_pos
 
         for _ in range(self.cfg.sim.decimation):
             self.sim_step_counter += 1
@@ -241,15 +348,28 @@ class BaseEnv(VecEnv):
 
         self.reset_buf, self.time_out_buf = self.check_reset()
         reward_buf = self.reward_manager.compute(self.step_dt)
+        
+        # Get terminal states before reset
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
+        terminal_obs, terminal_critic_obs = self.compute_observations()
+        terminal_amp_states = self.get_amp_observations() if hasattr(self, 'get_amp_observations') else torch.zeros(self.num_envs, 0, device=self.device)
+        
         self.reset(env_ids)
 
         actor_obs, critic_obs = self.compute_observations()
         self.extras["observations"] = {"critic": critic_obs}
+        self.extras["time_outs"] = self.time_out_buf
+        
+        # Store terminal info for AMP if needed
+        self.extras["terminal_obs"] = terminal_obs
+        self.extras["terminal_critic_obs"] = terminal_critic_obs
+        self.extras["terminal_amp_states"] = terminal_amp_states
 
+        # Return Isaac Lab style: (obs, rewards, dones, infos)
         return actor_obs, reward_buf, self.reset_buf, self.extras
 
     def check_reset(self):
+        """Check termination conditions for all environments."""
         net_contact_forces = self.contact_sensor.data.net_forces_w_history
 
         reset_buf = torch.any(
@@ -268,18 +388,19 @@ class BaseEnv(VecEnv):
         return reset_buf, time_out_buf
 
     def init_obs_buffer(self):
+        """Initialize observation buffers and noise vectors."""
         if self.add_noise:
             actor_obs, _ = self.compute_current_observations()
             noise_vec = torch.zeros_like(actor_obs[0])
             noise_scales = self.cfg.noise.noise_scales
             noise_vec[:3] = noise_scales.ang_vel * self.obs_scales.ang_vel
             noise_vec[3:6] = noise_scales.projected_gravity * self.obs_scales.projected_gravity
-            noise_vec[6:9] = 0
+            noise_vec[6:9] = 0  # commands
             noise_vec[9 : 9 + self.num_actions] = noise_scales.joint_pos * self.obs_scales.joint_pos
             noise_vec[9 + self.num_actions : 9 + self.num_actions * 2] = (
                 noise_scales.joint_vel * self.obs_scales.joint_vel
             )
-            noise_vec[9 + self.num_actions * 2 : 9 + self.num_actions * 3] = 0.0
+            noise_vec[9 + self.num_actions * 2 : 9 + self.num_actions * 3] = 0.0  # actions
             self.noise_scale_vec = noise_vec
 
             if self.cfg.scene.height_scanner.enable_height_scan:
@@ -300,6 +421,7 @@ class BaseEnv(VecEnv):
         )
 
     def update_terrain_levels(self, env_ids):
+        """Update terrain curriculum levels based on robot progress."""
         distance = torch.norm(self.robot.data.root_pos_w[env_ids, :2] - self.scene.env_origins[env_ids, :2], dim=1)
         move_up = distance > self.scene.terrain.cfg.terrain_generator.size[0] / 2
         move_down = (
@@ -307,16 +429,35 @@ class BaseEnv(VecEnv):
         )
         move_down *= ~move_up
         self.scene.terrain.update_env_origins(env_ids, move_up, move_down)
-        extras = {"Curriculum/terrain_levels": torch.mean(self.scene.terrain.terrain_levels.float())}
+        extras = {}
+        extras["Curriculum/terrain_levels"] = torch.mean(self.scene.terrain.terrain_levels.float())
         return extras
 
     def get_observations(self):
+        """Get current observations for inference.
+        
+        Returns:
+            Tuple of (actor_obs, extras) for Isaac Lab runner compatibility.
+            extras contains {"observations": {"critic": critic_obs}}
+        """
         actor_obs, critic_obs = self.compute_observations()
         self.extras["observations"] = {"critic": critic_obs}
         return actor_obs, self.extras
 
+    def get_privileged_observations(self):
+        """Get privileged observations (critic observations)."""
+        _, critic_obs = self.compute_observations()
+        return critic_obs
+
+    def get_amp_observations(self):
+        """Get AMP observations for adversarial motion prior.
+        Returns joint positions as AMP observations.
+        """
+        return self.robot.data.joint_pos
+
     @staticmethod
     def seed(seed: int = -1) -> int:
+        """Set random seed for reproducibility."""
         try:
             import omni.replicator.core as rep  # type: ignore
 
@@ -324,3 +465,72 @@ class BaseEnv(VecEnv):
         except ModuleNotFoundError:
             pass
         return torch_utils.set_seed(seed)
+
+    def _debug_print_camera_and_parent(self, env_id: int = 0):
+        """Prints debug info for RGB camera prim and its parent prim (translation + config).
+
+        Args:
+            env_id: environment index to inspect
+        """
+        try:
+            from pxr import UsdGeom, Gf
+
+            cam = getattr(self, "rgb_camera", None)
+            if cam is None:
+                print("[DEBUG] No rgb_camera present on scene")
+                return
+
+            # try to get prim path of first sensor prim
+            prim = None
+            if hasattr(cam, "_sensor_prims") and len(cam._sensor_prims) > 0:
+                prim = cam._sensor_prims[0].GetPrim()
+
+            stage = sim_utils.get_current_stage()
+
+            print("[DEBUG] --- Camera debug info ---")
+            # print configured offset
+            try:
+                off = cam.cfg.offset
+                print(f"[DEBUG] Config offset.pos={off.pos}, rot={off.rot}, convention={off.convention}")
+            except Exception:
+                pass
+
+            # print data buffer pose if available
+            try:
+                pos_w = cam.data.pos_w[env_id]
+                quat_w = cam.data.quat_w_world[env_id]
+                print(f"[DEBUG] Camera.data.pos_w[{env_id}] = {pos_w.cpu().numpy()}, quat_w_world = {quat_w.cpu().numpy()}")
+            except Exception:
+                pass
+
+            if prim is not None and prim.IsValid():
+                cam_path = prim.GetPath().pathString
+                parent_path = prim.GetPath().GetParentPath().pathString
+                print(f"[DEBUG] Camera prim path: {cam_path}")
+                print(f"[DEBUG] Camera parent prim path: {parent_path}")
+
+                try:
+                    cam_xform = UsdGeom.Xformable(prim)
+                    world_tf = cam_xform.ComputeLocalToWorldTransform(0)
+                    trans = world_tf.ExtractTranslation()
+                    print(f"[DEBUG] Camera prim world translation: ({trans[0]}, {trans[1]}, {trans[2]})")
+                except Exception:
+                    pass
+
+                # parent prim
+                parent_prim = stage.GetPrimAtPath(parent_path)
+                if parent_prim and parent_prim.IsValid():
+                    try:
+                        parent_xform = UsdGeom.Xformable(parent_prim)
+                        p_tf = parent_xform.ComputeLocalToWorldTransform(0)
+                        p_trans = p_tf.ExtractTranslation()
+                        print(f"[DEBUG] Parent prim world translation: ({p_trans[0]}, {p_trans[1]}, {p_trans[2]})")
+                    except Exception:
+                        pass
+
+            else:
+                print("[DEBUG] Camera prim not available in sensor prims list")
+
+            print("[DEBUG] ----------------------------")
+        except Exception as e:
+            print(f"[DEBUG] Failed to print camera debug info: {e}")

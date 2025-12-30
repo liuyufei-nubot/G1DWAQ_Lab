@@ -19,7 +19,8 @@
 """Implementation of different RL agents."""
 
 from .amp_ppo import AMPPPO
+from .amp_ppo_multi import AMPPPOMulti
 from .distillation import Distillation
 from .ppo import PPO
 
-__all__ = ["PPO", "Distillation", "AMPPPO"]
+__all__ = ["PPO", "Distillation", "AMPPPO", "AMPPPOMulti"]

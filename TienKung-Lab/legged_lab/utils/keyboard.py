@@ -85,6 +85,16 @@ class Keyboard(DeviceBase):
             if event.input.name in self._INPUT_KEY_MAPPING:
                 if event.input.name == "R":
                     self.env.episode_length_buf = torch.ones_like(self.env.episode_length_buf) * 1e6
+                elif event.input.name == "N":
+                    # Next robot: increment lookat_id
+                    if hasattr(self.env, 'lookat_id'):
+                        self.env.lookat_id = (self.env.lookat_id + 1) % self.env.num_envs
+                        print(f"[Keyboard] Switched to robot {self.env.lookat_id}")
+                elif event.input.name == "P":
+                    # Previous robot: decrement lookat_id
+                    if hasattr(self.env, 'lookat_id'):
+                        self.env.lookat_id = (self.env.lookat_id - 1) % self.env.num_envs
+                        print(f"[Keyboard] Switched to robot {self.env.lookat_id}")
 
         # since no error, we are fine :)
         return True
@@ -94,4 +104,6 @@ class Keyboard(DeviceBase):
         self._INPUT_KEY_MAPPING = {
             # forward command
             "R": "reset envs",
+            "N": "next robot (lookat_id + 1)",
+            "P": "previous robot (lookat_id - 1)",
         }

@@ -29,6 +29,7 @@ import legged_lab.mdp as mdp
 from legged_lab.sensors.camera import TiledCameraCfg
 from legged_lab.sensors.lidar import LidarCfg
 
+from legged_lab.sensors.camera.rgb_camera_cfg import RgbCameraCfg
 
 @configclass
 class RewardCfg:
@@ -47,6 +48,7 @@ class HeightScannerCfg:
 
 @configclass
 class BaseSceneCfg:
+    seed: int = 42
     max_episode_length_s: float = 20.0
     num_envs: int = 4096
     env_spacing: float = 2.5
@@ -57,6 +59,8 @@ class BaseSceneCfg:
     height_scanner: HeightScannerCfg = HeightScannerCfg()
     lidar: LidarCfg = LidarCfg()
     depth_camera: TiledCameraCfg = TiledCameraCfg()
+    rgb_camera: RgbCameraCfg = RgbCameraCfg()
+
 
 
 @configclass
@@ -103,7 +107,7 @@ class CommandsCfg:
     rel_heading_envs: float = 1.0
     heading_command: bool = True
     heading_control_stiffness: float = 0.5
-    debug_vis: bool = True
+    debug_vis: bool = False  # Disable velocity command arrows visualization
     ranges: CommandRangesCfg = CommandRangesCfg()
 
 

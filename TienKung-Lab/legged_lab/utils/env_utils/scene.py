@@ -28,7 +28,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 
 from legged_lab.sensors.camera import TiledCameraCfg
 from legged_lab.terrains.ray_caster_cfg import RayCasterCfg
-
+from legged_lab.sensors.camera.rgb_camera_cfg import RgbCameraCfg
 if TYPE_CHECKING:
     from legged_lab.envs.base.base_env_config import BaseSceneCfg
 
@@ -84,7 +84,7 @@ class SceneCfg(InteractiveSceneCfg):
             self.height_scanner = RayCasterCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/" + config.height_scanner.prim_body_name,
                 offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
-                attach_yaw_only=True,
+                ray_alignment="yaw",
                 pattern_cfg=patterns.GridPatternCfg(
                     resolution=config.height_scanner.resolution, size=config.height_scanner.size
                 ),
@@ -98,7 +98,7 @@ class SceneCfg(InteractiveSceneCfg):
             self.lidar = RayCasterCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/" + config.lidar.prim_body_name,
                 offset=RayCasterCfg.OffsetCfg(pos=config.lidar.offset, rot=config.lidar.rotation),
-                attach_yaw_only=True,
+                ray_alignment="yaw",
                 pattern_cfg=config.lidar.pattern_cfg,
                 debug_vis=config.lidar.debug_vis,
                 mesh_prim_paths=config.lidar.mesh_prim_paths,
@@ -115,4 +115,20 @@ class SceneCfg(InteractiveSceneCfg):
                 spawn=config.depth_camera.spawn,
                 debug_vis=config.depth_camera.debug_vis,
                 visualizer_cfg=config.depth_camera.visualizer_cfg,
+            )
+        if hasattr(config, "rgb_camera") and config.rgb_camera.enable_rgb_camera:
+            # Place camera prim as a child of the body prim to avoid spawning at the same prim path
+            # update_period: calculated from update_interval_steps (number of simulation steps)
+            update_interval_steps = getattr(config.rgb_camera, "update_interval_steps", 5)
+            rgb_update_period = step_dt * update_interval_steps
+            self.rgb_camera = RgbCameraCfg(
+                prim_path="{ENV_REGEX_NS}/Robot/" + config.rgb_camera.prim_body_name + "/rgb_camera",
+                offset=config.rgb_camera.offset,
+                height=config.rgb_camera.height,
+                width=config.rgb_camera.width,
+                data_types=config.rgb_camera.data_types,
+                spawn=config.rgb_camera.spawn,
+                debug_vis=config.rgb_camera.debug_vis,
+                sensor_noise=config.rgb_camera.sensor_noise,
+                update_period=rgb_update_period,
             )

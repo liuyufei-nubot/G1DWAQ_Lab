@@ -19,11 +19,12 @@
 import argparse
 import os
 
+import cv2
 import torch
 from isaaclab.app import AppLauncher
 
 from legged_lab.utils import task_registry
-from rsl_rl.runners import AmpOnPolicyRunner, OnPolicyRunner
+from rsl_rl.runners import AmpOnPolicyRunner, OnPolicyRunner, AMPOnPolicyRunnerMulti
 
 # local imports
 import legged_lab.utils.cli_args as cli_args  # isort: skip
@@ -39,8 +40,8 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
-# Start camera rendering
-if "sensor" in args_cli.task:
+# Start camera rendering for tasks that require RGB/depth sensing
+if args_cli.task and ("sensor" in args_cli.task or "rgb" in args_cli.task or "depth" in args_cli.task):
     args_cli.enable_cameras = True
 
 # launch omniverse app
@@ -64,15 +65,16 @@ def play():
     env_cfg.noise.add_noise = False
     env_cfg.domain_rand.events.push_robot = None
     env_cfg.scene.max_episode_length_s = 40.0
-    env_cfg.scene.num_envs = 50
-    env_cfg.scene.env_spacing = 2.5
+    env_cfg.scene.num_envs = 1
+    env_cfg.scene.env_spacing = 6.0
     env_cfg.commands.rel_standing_envs = 0.0
     env_cfg.commands.ranges.lin_vel_x = (1.0, 1.0)
     env_cfg.commands.ranges.lin_vel_y = (0.0, 0.0)
+    env_cfg.commands.debug_vis = False  # Disable velocity command arrows
     env_cfg.scene.height_scanner.drift_range = (0.0, 0.0)
 
-    env_cfg.scene.terrain_generator = None
-    env_cfg.scene.terrain_type = "plane"
+    # env_cfg.scene.terrain_generator = None
+    # env_cfg.scene.terrain_type = "plane"
 
     if env_cfg.scene.terrain_generator is not None:
         env_cfg.scene.terrain_generator.num_rows = 5
@@ -95,17 +97,61 @@ def play():
     resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
     log_dir = os.path.dirname(resume_path)
 
-    runner_class: OnPolicyRunner | AmpOnPolicyRunner = eval(agent_cfg.runner_class_name)
+    runner_class: OnPolicyRunner | AmpOnPolicyRunner | AMPOnPolicyRunnerMulti = eval(agent_cfg.runner_class_name)
     runner = runner_class(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     runner.load(resume_path, load_optimizer=False)
 
-    policy = runner.get_inference_policy(device=env.device)
+    # Check if using ActorCriticDepth which requires history and optionally rgb_image
+    use_depth_policy = hasattr(runner.alg.policy, 'history_encoder')
+    
+    # Check if RGB camera is available (from env, not runner)
+    use_rgb = hasattr(env, 'rgb_camera') and env.rgb_camera is not None
+    print(f"[INFO] use_depth_policy: {use_depth_policy}, use_rgb: {use_rgb}")
+    
+    if use_depth_policy:
+        # Initialize trajectory history buffer
+        # Get obs_history_len from env (preferred) or runner
+        obs_history_len = getattr(env, 'obs_history_len', getattr(runner, 'obs_history_len', 1))
+        num_obs = runner.num_obs
+        trajectory_history = torch.zeros(
+            size=(env.num_envs, obs_history_len, num_obs),
+            device=env.device
+        )
+        
+        # Set policy to eval mode
+        runner.eval_mode()
+        
+        # Create inference function that handles history and rgb
+        def policy_fn(obs):
+            nonlocal trajectory_history
+            normalized_obs = runner.obs_normalizer(obs) if runner.empirical_normalization else obs
+            
+            # Get RGB image if available
+            rgb_image = None
+            if use_rgb and hasattr(env, 'rgb_camera') and env.rgb_camera is not None:
+                rgb_raw = env.rgb_camera.data.output["rgb"]
+                if rgb_raw.shape[-1] == 4:
+                    rgb_raw = rgb_raw[..., :3]
+                rgb_image = rgb_raw.float().to(env.device) / 255.0
+            
+            actions = runner.alg.policy.act_inference(normalized_obs, trajectory_history, rgb_image=rgb_image)
+            
+            # Update history
+            trajectory_history = torch.cat((trajectory_history[:, 1:], normalized_obs.unsqueeze(1)), dim=1)
+            
+            return actions
+        
+        policy = policy_fn
+    else:
+        policy = runner.get_inference_policy(device=env.device)
 
-    export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    export_policy_as_jit(runner.alg.policy, runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
-    export_policy_as_onnx(
-        runner.alg.policy, normalizer=runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
-    )
+    # Skip JIT/ONNX export for ActorCriticDepth (complex architecture)
+    if not use_depth_policy:
+        export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
+        export_policy_as_jit(runner.alg.policy, runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
+        export_policy_as_onnx(
+            runner.alg.policy, normalizer=runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
+        )
 
     if not args_cli.headless:
         from legged_lab.utils.keyboard import Keyboard
@@ -113,12 +159,45 @@ def play():
         keyboard = Keyboard(env)  # noqa:F841
 
     obs, _ = env.get_observations()
+    
+    # Reset trajectory history with initial observation if using depth policy
+    if use_depth_policy:
+        normalized_obs = runner.obs_normalizer(obs) if runner.empirical_normalization else obs
+        trajectory_history = torch.cat((trajectory_history[:, 1:], normalized_obs.unsqueeze(1)), dim=1)
 
     while simulation_app.is_running():
 
         with torch.inference_mode():
             actions = policy(obs)
-            obs, _, _, _ = env.step(actions)
+            obs, _, dones, _ = env.step(actions)
+            
+            # Reset history for terminated environments
+            if use_depth_policy:
+                reset_env_ids = dones.nonzero(as_tuple=False).flatten()
+                if len(reset_env_ids) > 0:
+                    trajectory_history[reset_env_ids] = 0
+            
+            # Display RGB image in real-time using cv2.imshow
+            if hasattr(env, 'rgb_camera') and env.rgb_camera is not None:
+                try:
+                    rgb_raw = env.rgb_camera.data.output["rgb"]
+                    lookat_id = getattr(env, 'lookat_id', 0)
+                    rgb_img = rgb_raw[lookat_id].cpu().numpy()
+                    # Ensure uint8 format
+                    if rgb_img.dtype != 'uint8':
+                        rgb_img = (rgb_img * 255).clip(0, 255).astype('uint8')
+                    # Remove alpha channel if present
+                    if rgb_img.shape[-1] == 4:
+                        rgb_img = rgb_img[..., :3]
+                    # Convert RGB to BGR for OpenCV
+                    rgb_img_bgr = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
+                    # Resize for better visibility
+                    rgb_img_resized = cv2.resize(rgb_img_bgr, (256, 256), interpolation=cv2.INTER_LINEAR)
+                    # Display in window
+                    cv2.imshow("RGB Camera View", rgb_img_resized)
+                    cv2.waitKey(1)  # Required for window to update
+                except Exception as e:
+                    pass  # Silently ignore errors
 
 
 if __name__ == "__main__":
