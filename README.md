@@ -2,7 +2,37 @@
 
 # GeoLoco: 基于RGB相机的视觉运动控制
 
+## 快速开始
+
+### 训练
+```bash
+cd TienKung-Lab
+python legged_lab/scripts/train.py --task=g1_rgb --headless --num_envs=4096
+```
+
+### 测试
+```bash
+python legged_lab/scripts/play.py --task=g1_rgb --load_run=<运行目录> --checkpoint=model_<迭代次数>.pt
+```
+
+---
+
 ## G1 机器人配置
+
+### Intel RealSense D435i RGB 相机
+
+| 参数 | 数值 | 说明 |
+|------|------|------|
+| 安装位置 | `torso_link` | 相机安装在机器人躯干部位 |
+| 位置偏移 (x, y, z) | (0.0576, 0.0175, 0.4199) m | 相对于躯干坐标系的偏移量 |
+| 姿态 | 俯仰角 47.6° 向下 | 朝前下方观察 |
+| 分辨率 | 64 × 64 像素 | 降采样以适配强化学习训练 |
+| 水平视场角 | 69.4° | D435i RGB 传感器规格 |
+| 垂直视场角 | 42.5° | D435i RGB 传感器规格 |
+| 焦距 | 15.12 mm | 由视场角和光圈计算得出 |
+| 水平光圈 | 20.955 mm | 传感器物理尺寸 |
+| 更新频率 | 10 Hz | 每5个仿真步更新一次 (仿真频率50 Hz) |
+| 有效距离 | 0.01 - 100.0 m | 有效感知范围 |
 
 ### 自由度配置 (29 DOF)
 
@@ -780,37 +810,3 @@ joint_deviation_ankle = RewTerm(
 |--------|------|
 | `joint_deviation_l1` | 仅在 `\|v_{cmd}\| < 0.1` 时惩罚（静止状态） |
 | `joint_deviation_l1_always` | 无条件惩罚（推荐用于姿态保持关节） |
-
----
-
-## 快速开始
-
-### 训练
-```bash
-cd TienKung-Lab
-python legged_lab/scripts/train.py --task=g1_rgb --headless --num_envs=4096
-```
-
-### 测试
-```bash
-python legged_lab/scripts/play.py --task=g1_rgb --load_run=<运行目录> --checkpoint=model_<迭代次数>.pt
-```
-
----
-
-## 硬件配置
-
-### Intel RealSense D435i RGB 相机
-
-| 参数 | 数值 | 说明 |
-|------|------|------|
-| 安装位置 | `pelvis` | 相机安装在机器人骨盆部位 |
-| 位置偏移 (x, y, z) | (0.0576, 0.0175, 0.4299) m | 相对于骨盆坐标系的偏移量 |
-| 姿态 | 俯仰角 -45° | 朝前下方观察 |
-| 分辨率 | 64 × 64 像素 | 降采样以适配强化学习训练 |
-| 水平视场角 | 69.4° | D435i RGB 传感器规格 |
-| 垂直视场角 | 42.5° | D435i RGB 传感器规格 |
-| 焦距 | 15.12 mm | 由视场角和光圈计算得出 |
-| 水平光圈 | 20.955 mm | 传感器物理尺寸 |
-| 更新频率 | 10 Hz | 每5个仿真步更新一次 (仿真频率50 Hz) |
-| 有效距离 | 0.1 - 10.0 m | 有效感知范围 |
