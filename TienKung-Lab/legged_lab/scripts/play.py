@@ -34,6 +34,18 @@ parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
+parser.add_argument("--terrain", type=str, default="stairs", 
+                    choices=["stairs", "stairs_slope", "flat", "rough"],
+                    help="Terrain type for play: stairs (纯台阶最难), stairs_slope (台阶+斜坡), flat (平地), rough (训练地形)")
+parser.add_argument("--difficulty", type=float, default=0.2,
+                    help="Terrain difficulty (0.0-1.0), default=1.0 (最难)")
+parser.add_argument("--lighting", type=str, default="realistic",
+                    choices=["realistic", "cloudy", "evening", "bright", "default"],
+                    help="Lighting preset: realistic (真实户外), cloudy (多云), evening (傍晚), bright (明亮), default (默认白色)")
+parser.add_argument("--terrain_color", type=str, default="mdl_shingles",
+                    choices=["concrete", "grass", "sand", "dirt", "rock", "white", "dark",
+                             "mdl_marble", "mdl_shingles", "mdl_aluminum"],
+                    help="Terrain color: concrete/grass/sand/dirt/rock/white/dark (简单颜色), mdl_* (真实MDL材质)")
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -53,6 +65,8 @@ from isaaclab_tasks.utils import get_checkpoint_path
 
 from legged_lab.envs import *  # noqa:F401, F403
 from legged_lab.utils.cli_args import update_rsl_rl_cfg
+from legged_lab.terrains.terrain_generator_cfg import STAIRS_ONLY_HARD_CFG, STAIRS_SLOPE_HARD_CFG
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, NVIDIA_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 
 
 def play():
@@ -73,6 +87,27 @@ def play():
     env_cfg.commands.debug_vis = False  # Disable velocity command arrows
     env_cfg.scene.height_scanner.drift_range = (0.0, 0.0)
 
+    # ========== 地形选择 ==========
+    if args_cli.terrain == "stairs":
+        # 纯台阶地形 (最难)
+        env_cfg.scene.terrain_generator = STAIRS_ONLY_HARD_CFG
+        env_cfg.scene.terrain_type = "generator"
+        print("[INFO] 使用纯台阶地形 (最大难度)")
+    elif args_cli.terrain == "stairs_slope":
+        # 台阶 + 斜坡混合地形
+        env_cfg.scene.terrain_generator = STAIRS_SLOPE_HARD_CFG
+        env_cfg.scene.terrain_type = "generator"
+        print("[INFO] 使用台阶+斜坡混合地形 (高难度)")
+    elif args_cli.terrain == "flat":
+        # 平地
+        env_cfg.scene.terrain_generator = None
+        env_cfg.scene.terrain_type = "plane"
+        print("[INFO] 使用平地地形")
+    elif args_cli.terrain == "rough":
+        # 使用训练时的地形配置
+        print("[INFO] 使用训练地形配置 (ROUGH_TERRAINS_CFG)")
+    # 如果没有指定 --terrain，使用默认的训练地形
+
     # env_cfg.scene.terrain_generator = None
     # env_cfg.scene.terrain_type = "plane"
 
@@ -80,7 +115,144 @@ def play():
         env_cfg.scene.terrain_generator.num_rows = 5
         env_cfg.scene.terrain_generator.num_cols = 5
         env_cfg.scene.terrain_generator.curriculum = False
-        env_cfg.scene.terrain_generator.difficulty_range = (0.4, 0.4)
+        # 使用命令行指定的难度
+        difficulty = args_cli.difficulty
+        env_cfg.scene.terrain_generator.difficulty_range = (difficulty, difficulty)
+        print(f"[INFO] 地形难度: {difficulty}")
+
+    # ========== 光照设置 ==========
+    import isaaclab.sim as sim_utils
+    from isaaclab.assets import AssetBaseCfg
+    
+    # 光照预设配置
+    LIGHTING_PRESETS = {
+        "realistic": {  # 真实户外 - 晴朗天空
+            "dome_intensity": 1000.0,
+            "dome_color": (1.0, 0.98, 0.95),  # 略带暖色
+            "dome_texture": f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+            "distant_intensity": 2500.0,
+            "distant_color": (1.0, 0.95, 0.85),  # 阳光暖色
+        },
+        "cloudy": {  # 多云天气
+            "dome_intensity": 1200.0,
+            "dome_color": (0.9, 0.92, 0.95),  # 略带蓝灰
+            "dome_texture": f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Cloudy/lakeside_4k.hdr",
+            "distant_intensity": 1500.0,
+            "distant_color": (0.85, 0.88, 0.92),
+        },
+        "evening": {  # 傍晚
+            "dome_intensity": 800.0,
+            "dome_color": (1.0, 0.85, 0.7),  # 暖橙色
+            "dome_texture": f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Cloudy/evening_road_01_4k.hdr",
+            "distant_intensity": 2000.0,
+            "distant_color": (1.0, 0.7, 0.5),  # 夕阳色
+        },
+        "bright": {  # 明亮 (适合观察细节)
+            "dome_intensity": 2000.0,
+            "dome_color": (1.0, 1.0, 1.0),
+            "dome_texture": f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+            "distant_intensity": 3500.0,
+            "distant_color": (1.0, 1.0, 1.0),
+        },
+        "default": {  # 默认白色 (训练时用)
+            "dome_intensity": 750.0,
+            "dome_color": (1.0, 1.0, 1.0),
+            "dome_texture": f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+            "distant_intensity": 3000.0,
+            "distant_color": (0.75, 0.75, 0.75),
+        },
+    }
+    
+    lighting_preset = LIGHTING_PRESETS.get(args_cli.lighting, LIGHTING_PRESETS["realistic"])
+    
+    # 更新场景光照配置
+    env_cfg.scene.light = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DistantLightCfg(
+            color=lighting_preset["distant_color"],
+            intensity=lighting_preset["distant_intensity"],
+        ),
+    )
+    env_cfg.scene.sky_light = AssetBaseCfg(
+        prim_path="/World/skyLight",
+        spawn=sim_utils.DomeLightCfg(
+            intensity=lighting_preset["dome_intensity"],
+            color=lighting_preset["dome_color"],
+            texture_file=lighting_preset["dome_texture"],
+            visible_in_primary_ray=True,  # 显示天空背景
+        ),
+    )
+    print(f"[INFO] 光照预设: {args_cli.lighting}")
+
+    # ========== 地形颜色设置 ==========
+    # 简单颜色预设 (使用 PreviewSurfaceCfg)
+    TERRAIN_COLOR_PRESETS = {
+        "concrete": {  # 混凝土灰色 (真实感)
+            "diffuse_color": (0.5, 0.5, 0.5),
+            "roughness": 0.7,
+        },
+        "grass": {  # 草地绿色
+            "diffuse_color": (0.2, 0.45, 0.2),
+            "roughness": 0.9,
+        },
+        "sand": {  # 沙漠黄色
+            "diffuse_color": (0.76, 0.7, 0.5),
+            "roughness": 0.85,
+        },
+        "dirt": {  # 泥土棕色
+            "diffuse_color": (0.45, 0.35, 0.25),
+            "roughness": 0.9,
+        },
+        "rock": {  # 岩石灰色
+            "diffuse_color": (0.4, 0.38, 0.35),
+            "roughness": 0.8,
+        },
+        "white": {  # 白色 (原始)
+            "diffuse_color": (0.9, 0.9, 0.9),
+            "roughness": 0.5,
+        },
+        "dark": {  # 深色
+            "diffuse_color": (0.18, 0.18, 0.18),
+            "roughness": 0.6,
+        },
+    }
+    
+    # MDL 材质预设 (使用 MdlFileCfg - 更真实的材质)
+    # 注意: 只使用经过验证的 MDL 路径
+    MDL_TERRAIN_PRESETS = {
+        "mdl_marble": {  # 大理石砖 (Isaac Lab 默认使用的，确保可用)
+            "mdl_path": f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
+            "texture_scale": (0.25, 0.25),
+        },
+        "mdl_shingles": {  # 瓦片地面 (anymal_c 使用的)
+            "mdl_path": f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
+            "texture_scale": (0.5, 0.5),
+        },
+        "mdl_aluminum": {  # 铝金属地面 (测试文件使用的)
+            "mdl_path": f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Metals/Aluminum_Anodized.mdl",
+            "texture_scale": (0.5, 0.5),
+        },
+    }
+    
+    # 根据选择设置地形材质
+    if args_cli.terrain_color.startswith("mdl_"):
+        # 使用 MDL 材质 (更真实)
+        mdl_preset = MDL_TERRAIN_PRESETS.get(args_cli.terrain_color, MDL_TERRAIN_PRESETS["mdl_marble"])
+        env_cfg.scene.terrain_visual_material = sim_utils.MdlFileCfg(
+            mdl_path=mdl_preset["mdl_path"],
+            project_uvw=True,
+            texture_scale=mdl_preset["texture_scale"],
+        )
+        print(f"[INFO] 地形材质: {args_cli.terrain_color} (MDL)")
+    else:
+        # 使用简单颜色
+        terrain_color = TERRAIN_COLOR_PRESETS.get(args_cli.terrain_color, TERRAIN_COLOR_PRESETS["concrete"])
+        env_cfg.scene.terrain_visual_material = sim_utils.PreviewSurfaceCfg(
+            diffuse_color=terrain_color["diffuse_color"],
+            roughness=terrain_color["roughness"],
+            metallic=0.0,
+        )
+        print(f"[INFO] 地形颜色: {args_cli.terrain_color}")
 
     if args_cli.num_envs is not None:
         env_cfg.scene.num_envs = args_cli.num_envs

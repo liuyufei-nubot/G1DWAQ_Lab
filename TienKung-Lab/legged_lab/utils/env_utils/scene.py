@@ -52,7 +52,8 @@ class SceneCfg(InteractiveSceneCfg):
                 static_friction=1.0,
                 dynamic_friction=1.0,
             ),
-            visual_material=sim_utils.MdlFileCfg(
+            # Use custom visual material if provided, otherwise use default MDL material
+            visual_material=config.terrain_visual_material if config.terrain_visual_material is not None else sim_utils.MdlFileCfg(
                 mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
                 project_uvw=True,
                 texture_scale=(0.25, 0.25),
@@ -121,6 +122,9 @@ class SceneCfg(InteractiveSceneCfg):
             # update_period: calculated from update_interval_steps (number of simulation steps)
             update_interval_steps = getattr(config.rgb_camera, "update_interval_steps", 5)
             rgb_update_period = step_dt * update_interval_steps
+            # CRITICAL: update_latest_camera_pose must be True for body-mounted cameras!
+            # Without this, camera pose is only read at initialization and won't follow the robot
+            update_latest_camera_pose = getattr(config.rgb_camera, "update_latest_camera_pose", True)
             self.rgb_camera = RgbCameraCfg(
                 prim_path="{ENV_REGEX_NS}/Robot/" + config.rgb_camera.prim_body_name + "/rgb_camera",
                 offset=config.rgb_camera.offset,
@@ -131,4 +135,5 @@ class SceneCfg(InteractiveSceneCfg):
                 debug_vis=config.rgb_camera.debug_vis,
                 sensor_noise=config.rgb_camera.sensor_noise,
                 update_period=rgb_update_period,
+                update_latest_camera_pose=update_latest_camera_pose,
             )

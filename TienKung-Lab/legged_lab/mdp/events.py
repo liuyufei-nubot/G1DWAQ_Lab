@@ -246,3 +246,40 @@ DEFAULT_SKY_TEXTURES = [
     # "http://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Skies/Cloudy/abandoned_parking_4k.hdr",
     # "http://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Skies/Cloudy/evening_road_01_4k.hdr",
 ]
+
+
+def randomize_terrain_material(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    mdl_materials: list[dict] | None = None,
+    randomize_material: bool = True,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("terrain"),
+):
+    """Randomize the terrain visual material by switching between MDL materials.
+    
+    This function changes the terrain surface material to simulate different ground types
+    (concrete, asphalt, grass, etc.), which is useful for RGB-based visual RL domain randomization.
+    
+    Note: This is a simplified implementation. Full MDL material switching at runtime
+    requires more complex USD operations. This serves as a placeholder for future implementation.
+    
+    Args:
+        env: The environment instance.
+        env_ids: The environment IDs to randomize.
+        mdl_materials: List of MDL material configurations, each with 'mdl_path' and 'texture_scale'.
+        randomize_material: Whether to randomize material.
+        asset_cfg: Configuration for the terrain asset in the scene.
+    """
+    if not randomize_material or not mdl_materials:
+        return
+    
+    # Note: Full runtime MDL material switching is complex in Isaac Sim
+    # This is a placeholder - actual implementation would need to:
+    # 1. Get the terrain prim
+    # 2. Unbind current material
+    # 3. Create/bind new MDL material
+    # 4. Set texture scale
+    
+    # For now, material randomization should be done at environment creation time
+    # by randomly selecting from MDL_TERRAIN_MATERIALS in the config
+    pass

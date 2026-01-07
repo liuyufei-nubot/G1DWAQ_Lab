@@ -33,6 +33,7 @@ from isaaclab.sensors import ContactSensor, RayCaster
 from isaaclab.sensors.camera import TiledCamera
 from isaaclab.sim import PhysxCfg, SimulationContext
 from isaaclab.utils.buffers import CircularBuffer, DelayBuffer
+from isaaclab.utils import math as math_utils
 
 from legged_lab.envs.g1.g1_config import G1FlatEnvCfg, G1RoughEnvCfg
 from legged_lab.utils.env_utils.scene import SceneCfg
@@ -142,6 +143,14 @@ class G1RgbEnv(VecEnv):
         self.max_episode_length_s = self.cfg.scene.max_episode_length_s
         self.max_episode_length = np.ceil(self.max_episode_length_s / self.step_dt)
         self.num_actions = self.robot.data.default_joint_pos.shape[1]
+        
+        # 打印关节名称顺序 (用于 sim2sim 调试)
+        # print("\n" + "="*60)
+        # print("Isaac Lab G1 关节顺序:")
+        # print("="*60)
+        # for i, name in enumerate(self.robot.joint_names):
+        #     print(f"  {i:2d}: {name}")
+        # print("="*60 + "\n")
         self.clip_actions = self.cfg.normalization.clip_actions
         self.clip_obs = self.cfg.normalization.clip_observations
 
@@ -170,6 +179,11 @@ class G1RgbEnv(VecEnv):
         self.termination_contact_cfg.resolve(self.scene)
         self.feet_cfg = SceneEntityCfg(name="contact_sensor", body_names=self.cfg.robot.feet_body_names)
         self.feet_cfg.resolve(self.scene)
+        
+        # Initialize feet state buffers for privileged info (after feet_cfg is resolved)
+        num_feet = len(self.feet_cfg.body_ids)  # Use actual resolved body IDs count
+        self.feet_pos_in_body = torch.zeros(self.num_envs, num_feet, 3, device=self.device)
+        self.feet_vel_in_body = torch.zeros(self.num_envs, num_feet, 3, device=self.device)
 
         self.obs_scales = self.cfg.normalization.obs_scales
         self.add_noise = self.cfg.noise.add_noise
@@ -211,11 +225,62 @@ class G1RgbEnv(VecEnv):
 
         root_lin_vel = robot.data.root_lin_vel_b
         feet_contact = torch.max(torch.norm(net_contact_forces[:, :, self.feet_cfg.body_ids], dim=-1), dim=1)[0] > 0.5
-        current_critic_obs = torch.cat(
-            [current_actor_obs, root_lin_vel * self.obs_scales.lin_vel, feet_contact], dim=-1
-        )
+        
+        # Build critic obs with privileged information
+        critic_obs_list = [current_actor_obs, root_lin_vel * self.obs_scales.lin_vel, feet_contact]
+        
+        # Compute feet info for privileged observations
+        priv_cfg = self.cfg.scene.privileged_info
+        if priv_cfg.enable_feet_info or priv_cfg.enable_feet_contact_force:
+            self._compute_feet_state()
+        
+        # Add feet position and velocity in body frame (12 dim)
+        if priv_cfg.enable_feet_info:
+            critic_obs_list.append(self.feet_pos_in_body.reshape(self.num_envs, -1) * self.obs_scales.feet_pos)
+            critic_obs_list.append(self.feet_vel_in_body.reshape(self.num_envs, -1) * self.obs_scales.feet_vel)
+        
+        # Add feet contact force 3D (6 dim for 2 feet)
+        if priv_cfg.enable_feet_contact_force:
+            # net_contact_forces shape: (num_envs, history_len, num_bodies, 3)
+            # Use the latest history frame (index -1)
+            feet_force = net_contact_forces[:, -1, self.feet_cfg.body_ids, :]  # (num_envs, num_feet, 3)
+            critic_obs_list.append(feet_force.reshape(self.num_envs, -1) * self.obs_scales.contact_force)
+        
+        # Add root height (1 dim)
+        if priv_cfg.enable_root_height:
+            root_height = robot.data.root_pos_w[:, 2:3]  # (num_envs, 1)
+            critic_obs_list.append(root_height)
+        
+        current_critic_obs = torch.cat(critic_obs_list, dim=-1)
 
         return current_actor_obs, current_critic_obs
+
+    def _compute_feet_state(self):
+        """Compute feet position and velocity in body frame."""
+        robot = self.robot
+        
+        # Get feet body IDs
+        feet_body_ids = self.feet_cfg.body_ids
+        
+        # Get feet positions in world frame
+        feet_pos_w = robot.data.body_pos_w[:, feet_body_ids, :]  # (num_envs, num_feet, 3)
+        feet_vel_w = robot.data.body_lin_vel_w[:, feet_body_ids, :]  # (num_envs, num_feet, 3)
+        
+        # Get root state
+        root_pos_w = robot.data.root_pos_w  # (num_envs, 3)
+        root_vel_w = robot.data.root_lin_vel_w  # (num_envs, 3)
+        root_quat_w = robot.data.root_quat_w  # (num_envs, 4) in (w, x, y, z) format
+        
+        # Translate to root frame
+        feet_pos_translated = feet_pos_w - root_pos_w.unsqueeze(1)  # (num_envs, num_feet, 3)
+        feet_vel_translated = feet_vel_w - root_vel_w.unsqueeze(1)  # (num_envs, num_feet, 3)
+        
+        # Rotate to body frame using Isaac Lab's quat_apply_inverse
+        # This handles (w, x, y, z) format correctly
+        num_feet = feet_pos_translated.shape[1]
+        for i in range(num_feet):
+            self.feet_pos_in_body[:, i, :] = math_utils.quat_apply_inverse(root_quat_w, feet_pos_translated[:, i, :])
+            self.feet_vel_in_body[:, i, :] = math_utils.quat_apply_inverse(root_quat_w, feet_vel_translated[:, i, :])
 
     def compute_observations(self):
         """Compute full observations including history and sensor data."""
@@ -236,10 +301,13 @@ class G1RgbEnv(VecEnv):
                 - self.height_scanner.data.ray_hits_w[..., 2]
                 - self.cfg.normalization.height_scan_offset
             ) * self.obs_scales.height_scan
+            # Critic always gets height_scan (privileged information)
             critic_obs = torch.cat([critic_obs, height_scan], dim=-1)
-            if self.add_noise:
-                height_scan += (2 * torch.rand_like(height_scan) - 1) * self.height_scan_noise_vec
-            actor_obs = torch.cat([actor_obs, height_scan], dim=-1)
+            # Actor only gets height_scan if critic_only=False (symmetric AC)
+            if not self.cfg.scene.height_scanner.critic_only:
+                if self.add_noise:
+                    height_scan = height_scan + (2 * torch.rand_like(height_scan) - 1) * self.height_scan_noise_vec
+                actor_obs = torch.cat([actor_obs, height_scan], dim=-1)
 
         # Depth camera observations
         # if self.cfg.scene.depth_camera.enable_depth_camera:

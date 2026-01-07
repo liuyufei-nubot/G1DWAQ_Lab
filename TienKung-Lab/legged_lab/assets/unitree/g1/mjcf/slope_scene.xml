@@ -1,0 +1,38 @@
+<mujoco model="g1 slope scene">
+  <!-- 包含带 motor actuator 的机器人模型 (daf = direct actuator force) -->
+  <include file="g1_29dof_rev_1_0_daf.xml"/>
+
+  <statistic center="3 0 0.5" extent="4.0"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="-130" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="slope_mat" rgba="0.5 0.6 0.5 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="3 0 3" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" friction="1.0 0.005 0.0001"/>
+    
+    <!-- 斜坡配置 -->
+    <!-- 上坡: 15度, 长度3m -->
+    <!-- euler="0 angle 0" 绕 Y 轴旋转 (pitch) -->
+    <geom name="slope_up" type="box" size="1.5 0.8 0.05" pos="2.5 0 0.4" 
+          euler="0 -0.2618 0" material="slope_mat" friction="1.0 0.005 0.0001"/>
+    
+    <!-- 平台 -->
+    <geom name="platform" type="box" size="1.0 0.8 0.05" pos="4.5 0 0.78" 
+          material="slope_mat" friction="1.0 0.005 0.0001"/>
+    
+    <!-- 下坡: 15度 -->
+    <geom name="slope_down" type="box" size="1.5 0.8 0.05" pos="6.5 0 0.4" 
+          euler="0 0.2618 0" material="slope_mat" friction="1.0 0.005 0.0001"/>
+  </worldbody>
+</mujoco>

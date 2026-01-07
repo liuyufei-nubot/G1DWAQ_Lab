@@ -9,6 +9,9 @@
 # This file contains code derived from Isaac Lab Project (BSD-3-Clause license)
 # with modifications by Legged Lab Project (BSD-3-Clause license).
 
+import random
+
+import isaaclab.sim as sim_utils
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
@@ -130,6 +133,48 @@ class G1RewardCfg(RewardCfg):
     )
 
 
+from isaaclab.utils.assets import NVIDIA_NUCLEUS_DIR, ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+
+# ========== HDR Sky Textures for Domain Randomization ==========
+# These HDR textures simulate different weather/lighting conditions
+HDR_SKY_TEXTURES = [
+    # Clear sky - outdoor sunny
+    f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+    # Cloudy sky - overcast weather
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Cloudy/abandoned_parking_4k.hdr",
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Cloudy/evening_road_01_4k.hdr",
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Cloudy/lakeside_4k.hdr",
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Cloudy/kloofendal_48d_partly_cloudy_4k.hdr",
+    # Indoor environments
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Indoor/autoshop_01_4k.hdr",
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Indoor/carpentry_shop_01_4k.hdr",
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Indoor/hospital_room_4k.hdr",
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Indoor/hotel_room_4k.hdr",
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Indoor/old_bus_depot_4k.hdr",
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Indoor/small_empty_house_4k.hdr",
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Indoor/surgery_4k.hdr",
+    # Studio lighting
+    f"{NVIDIA_NUCLEUS_DIR}/Assets/Skies/Studio/photo_studio_01_4k.hdr",
+]
+
+# ========== MDL Terrain Materials for Domain Randomization ==========
+# These MDL materials simulate different ground surface types
+# Note: MDL material switching at runtime is complex; for now, randomly select one at env creation
+MDL_TERRAIN_MATERIALS = [
+    {  # 大理石砖
+        "mdl_path": f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
+        "texture_scale": (0.25, 0.25),
+    },
+    {  # 瓦片
+        "mdl_path": f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
+        "texture_scale": (0.5, 0.5),
+    },
+    {  # 铝金属
+        "mdl_path": f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Metals/Aluminum_Anodized.mdl",
+        "texture_scale": (0.5, 0.5),
+    },
+]
+
 @configclass
 class G1RgbEventCfg(EventCfg):
     """Extended event configuration with lighting randomization for RGB-based RL.
@@ -146,9 +191,10 @@ class G1RgbEventCfg(EventCfg):
             "asset_cfg": SceneEntityCfg("sky_light"),
             "intensity_range": (300.0, 2000.0),  # Wide range for robustness
             "color_variation": 0.3,  # ±30% color variation
+            "textures": HDR_SKY_TEXTURES,  # List of HDR textures to sample from
             "randomize_intensity": True,
             "randomize_color": True,
-            "randomize_texture": False,  # Set True if you have HDR textures
+            "randomize_texture": True,  # HDR texture randomization enabled
             "default_intensity": 750.0,
             "default_color": (0.75, 0.75, 0.75),
         },
@@ -164,7 +210,7 @@ class G1RgbEventCfg(EventCfg):
             "color_variation": 0.2,
             "randomize_intensity": True,
             "randomize_color": True,
-            "randomize_angle": False,  # Optional: randomize light direction
+            "randomize_angle": True,  # Randomize light direction for sim2real
             "default_intensity": 3000.0,
             "default_color": (0.75, 0.75, 0.75),
         },
@@ -209,8 +255,18 @@ class G1RgbEnvCfg(BaseEnvCfg):
         self.scene.terrain_generator = ROUGH_TERRAINS_CFG
         
         # Height scanner configuration
+        # 非对称 AC: height_scan 作为特权信息只给 Critic，Actor 不使用
+        # 这样 Actor 可以直接部署到真实机器人 (无需 height_scan)
         self.scene.height_scanner.enable_height_scan = True
+        self.scene.height_scanner.critic_only = True  # Asymmetric AC
         self.scene.height_scanner.prim_body_name = "torso_link"
+        
+        # ========== Privileged Information for Critic (非对称 AC) ==========
+        # 这些特权信息只给 Critic 使用，帮助训练更稳定
+        # Actor 不使用这些信息，可以直接部署
+        self.scene.privileged_info.enable_feet_info = True          # 脚部位置/速度 (12 dim)
+        self.scene.privileged_info.enable_feet_contact_force = True # 脚部接触力 (6 dim)
+        self.scene.privileged_info.enable_root_height = True        # 基座高度 (1 dim)
         
         # Robot-specific settings
         self.robot.actor_obs_history_length = 1
@@ -221,8 +277,25 @@ class G1RgbEnvCfg(BaseEnvCfg):
         # ========== Lighting Randomization for RGB-based Visual RL ==========
         # Use extended EventCfg with lighting randomization for sim-to-real transfer
         self.domain_rand.events = G1RgbEventCfg()
+        
+        # ========== Action Delay for Sim-to-Real ==========
+        # Simulate real-world communication/computation delays
+        self.domain_rand.action_delay.enable = True
+        self.domain_rand.action_delay.params = {"max_delay": 3, "min_delay": 0}  # 0-3 steps delay
         # Set robot-specific mass randomization body names (after EventCfg replacement)
         self.domain_rand.events.add_base_mass.params["asset_cfg"].body_names = [".*torso.*"]
+        
+        # ========== MDL Terrain Material Randomization (at env creation) ==========
+        # Randomly select a terrain material from MDL_TERRAIN_MATERIALS list
+        # This simulates different ground surfaces (concrete, tiles, metal, etc.)
+        if MDL_TERRAIN_MATERIALS:
+            selected_material = random.choice(MDL_TERRAIN_MATERIALS)
+            self.scene.terrain_visual_material = sim_utils.MdlFileCfg(
+                mdl_path=selected_material["mdl_path"],
+                project_uvw=True,
+                texture_scale=selected_material["texture_scale"],
+            )
+            print(f"[INFO] 随机选择地形材质: {selected_material['mdl_path'].split('/')[-1]}")
         
         # Reward weights
         self.reward.feet_air_time.weight = 0.25
@@ -231,26 +304,28 @@ class G1RgbEnvCfg(BaseEnvCfg):
         self.reward.lin_vel_z_l2.weight = -0.25
         
         # Enable RGB camera - Intel RealSense D435i specifications
-        # Mount on pelvis with 45° pitch down (looking forward and down)
+        # Camera position from URDF: d435_joint on torso_link
+        # URDF: xyz="0.0576235 0.01753 0.41987" rpy="0 0.8307767239493009 0" (pitch=47.6° down)
         # D435i RGB camera specs: HFOV=69.4°, VFOV=42.5°
         self.scene.rgb_camera.enable_rgb_camera = True
-        self.scene.rgb_camera.prim_body_name = "pelvis"
+        self.scene.rgb_camera.prim_body_name = "torso_link"  # From URDF: parent link="torso_link"
         self.scene.rgb_camera.height = 64
         self.scene.rgb_camera.width = 64
-        # Position relative to pelvis link (from reference config)
-        self.scene.rgb_camera.offset.pos = (0.0576235, 0.01753, 0.42987)
-        # Rotation: 45° pitch down using "world" convention
-        # "world" convention: forward=+X, up=+Z, left=+Y (right-hand system)
-        # Rotate +45° around Y axis: thumb points +Y(left), fingers curl from +X to -Z
-        # This tilts camera forward axis downward
-        # q = (cos(22.5°), 0, sin(22.5°), 0) = (0.9239, 0, 0.3827, 0)
-        self.scene.rgb_camera.offset.rot = (0.9239, 0.0, 0.3827, 0.0)
+        # Position relative to torso_link (from URDF d435_joint)
+        self.scene.rgb_camera.offset.pos = (0.0576235, 0.01753, 0.41987)
+        # Rotation: 47.6° pitch down (from URDF: rpy="0 0.8307767239493009 0")
+        # Convert RPY to quaternion: pitch = 0.8308 rad = 47.6°
+        # q = (cos(pitch/2), 0, sin(pitch/2), 0) = (cos(0.4154), 0, sin(0.4154), 0)
+        # q ≈ (0.9148, 0, 0.4039, 0)
+        self.scene.rgb_camera.offset.rot = (0.9148, 0.0, 0.4039, 0.0)
         self.scene.rgb_camera.offset.convention = "world"
         # D435i camera intrinsics:
         # - HFOV = 69.4°, focal_length = horizontal_aperture / (2 * tan(HFOV/2))
         # - horizontal_aperture = 20.955, focal_length = 20.955 / (2 * tan(34.7°)) ≈ 15.12
         self.scene.rgb_camera.spawn.focal_length = 15.12
         self.scene.rgb_camera.spawn.horizontal_aperture = 20.955
+        # Set near clipping plane to avoid rendering robot's own body parts
+        self.scene.rgb_camera.spawn.clipping_range = (0.01, 100.0)  # Near=10cm to avoid self-view
         # Camera update rate: 5 simulation steps
         # update_period = step_dt * update_interval_steps = 0.02 * 5 = 0.1s (10 Hz)
         self.scene.rgb_camera.update_interval_steps = 5

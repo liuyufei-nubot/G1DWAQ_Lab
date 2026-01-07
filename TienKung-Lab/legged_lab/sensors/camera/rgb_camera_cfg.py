@@ -50,5 +50,8 @@ class RgbCameraCfg(TiledCameraCfg):
     offset: TiledCameraCfg.OffsetCfg = TiledCameraCfg.OffsetCfg()
     spawn: PinholeCameraCfg = PinholeCameraCfg()
     sensor_noise: RgbSensorNoiseCfg = RgbSensorNoiseCfg()
+    # CRITICAL: Must be True for body-mounted cameras to follow the robot!
+    # Without this, camera pose is only read at initialization
+    update_latest_camera_pose: bool = True
 
     debug_vis: bool = False

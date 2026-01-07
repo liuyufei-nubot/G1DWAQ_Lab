@@ -39,11 +39,20 @@ class RewardCfg:
 @configclass
 class HeightScannerCfg:
     enable_height_scan: bool = False
+    critic_only: bool = False  # If True, height_scan only goes to critic (asymmetric AC)
     prim_body_name: str = MISSING
     resolution: float = 0.1
     size: tuple = (1.6, 1.0)
     debug_vis: bool = False
     drift_range: tuple = (0.0, 0.0)
+
+
+@configclass
+class PrivilegedInfoCfg:
+    """Configuration for privileged information given to Critic (asymmetric AC)."""
+    enable_feet_info: bool = False      # feet position and velocity in body frame (12 dim)
+    enable_feet_contact_force: bool = False  # feet contact force 3D (6 dim)
+    enable_root_height: bool = False    # base height (1 dim)
 
 
 @configclass
@@ -55,8 +64,10 @@ class BaseSceneCfg:
     robot: ArticulationCfg = MISSING
     terrain_type: str = MISSING
     terrain_generator: TerrainGeneratorCfg = None
+    terrain_visual_material: any = None  # Custom terrain visual material (PreviewSurfaceCfg or MdlFileCfg)
     max_init_terrain_level: int = 5
     height_scanner: HeightScannerCfg = HeightScannerCfg()
+    privileged_info: PrivilegedInfoCfg = PrivilegedInfoCfg()  # Privileged info for Critic
     lidar: LidarCfg = LidarCfg()
     depth_camera: TiledCameraCfg = TiledCameraCfg()
     rgb_camera: RgbCameraCfg = RgbCameraCfg()
@@ -82,6 +93,10 @@ class ObsScalesCfg:
     joint_vel: float = 1.0
     actions: float = 1.0
     height_scan: float = 1.0
+    # Privileged info scales
+    feet_pos: float = 1.0
+    feet_vel: float = 1.0
+    contact_force: float = 0.01  # contact force is large, scale down
 
 
 @configclass

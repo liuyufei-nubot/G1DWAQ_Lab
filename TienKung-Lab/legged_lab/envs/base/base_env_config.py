@@ -45,6 +45,7 @@ from .base_config import (
     NormalizationCfg,
     ObsScalesCfg,
     PhysxCfg,
+    PrivilegedInfoCfg,
     RewardCfg,
     RobotCfg,
     SimCfg,

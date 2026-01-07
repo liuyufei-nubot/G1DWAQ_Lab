@@ -175,10 +175,13 @@ class BaseEnv(VecEnv):
                 - self.height_scanner.data.ray_hits_w[..., 2]
                 - self.cfg.normalization.height_scan_offset
             ) * self.obs_scales.height_scan
+            # Critic always gets height_scan (privileged information)
             critic_obs = torch.cat([critic_obs, height_scan], dim=-1)
-            if self.add_noise:
-                height_scan += (2 * torch.rand_like(height_scan) - 1) * self.height_scan_noise_vec
-            actor_obs = torch.cat([actor_obs, height_scan], dim=-1)
+            # Actor only gets height_scan if critic_only=False (symmetric AC)
+            if not self.cfg.scene.height_scanner.critic_only:
+                if self.add_noise:
+                    height_scan = height_scan + (2 * torch.rand_like(height_scan) - 1) * self.height_scan_noise_vec
+                actor_obs = torch.cat([actor_obs, height_scan], dim=-1)
 
         actor_obs = torch.clip(actor_obs, -self.clip_obs, self.clip_obs)
         critic_obs = torch.clip(critic_obs, -self.clip_obs, self.clip_obs)

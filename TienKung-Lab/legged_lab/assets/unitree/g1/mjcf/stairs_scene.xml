@@ -1,0 +1,54 @@
+<mujoco model="g1 stairs scene">
+  <!-- 包含带 motor actuator 的机器人模型 (daf = direct actuator force) -->
+  <include file="g1_29dof_rev_1_0_daf.xml"/>
+
+  <statistic center="2 0 0.8" extent="4.0"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="-130" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="stairs" rgba="0.6 0.6 0.6 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="2 0 3" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" friction="1.0 0.005 0.0001"/>
+    
+    <!-- 台阶配置: 10级上楼 + 10级下楼 -->
+    <!-- 台阶参数: step_height=0.15m, step_depth=0.31m -->
+    
+    <!-- 上楼台阶 (从 x=1.31 开始) -->
+    <geom name="stair_up_1"  type="box" size="0.155 0.8 0.075"  pos="1.31 0 0.075"  material="stairs"/>
+    <geom name="stair_up_2"  type="box" size="0.155 0.8 0.075"  pos="1.62 0 0.225"  material="stairs"/>
+    <geom name="stair_up_3"  type="box" size="0.155 0.8 0.075"  pos="1.93 0 0.375"  material="stairs"/>
+    <geom name="stair_up_4"  type="box" size="0.155 0.8 0.075"  pos="2.24 0 0.525"  material="stairs"/>
+    <geom name="stair_up_5"  type="box" size="0.155 0.8 0.075"  pos="2.55 0 0.675"  material="stairs"/>
+    <geom name="stair_up_6"  type="box" size="0.155 0.8 0.075"  pos="2.86 0 0.825"  material="stairs"/>
+    <geom name="stair_up_7"  type="box" size="0.155 0.8 0.075"  pos="3.17 0 0.975"  material="stairs"/>
+    <geom name="stair_up_8"  type="box" size="0.155 0.8 0.075"  pos="3.48 0 1.125"  material="stairs"/>
+    <geom name="stair_up_9"  type="box" size="0.155 0.8 0.075"  pos="3.79 0 1.275"  material="stairs"/>
+    <geom name="stair_up_10" type="box" size="0.155 0.8 0.075"  pos="4.10 0 1.425"  material="stairs"/>
+    
+    <!-- 平台 -->
+    <geom name="platform" type="box" size="0.31 0.8 0.075" pos="4.56 0 1.575" material="stairs"/>
+    
+    <!-- 下楼台阶 -->
+    <geom name="stair_down_1"  type="box" size="0.155 0.8 0.075"  pos="5.02 0 1.425"  material="stairs"/>
+    <geom name="stair_down_2"  type="box" size="0.155 0.8 0.075"  pos="5.33 0 1.275"  material="stairs"/>
+    <geom name="stair_down_3"  type="box" size="0.155 0.8 0.075"  pos="5.64 0 1.125"  material="stairs"/>
+    <geom name="stair_down_4"  type="box" size="0.155 0.8 0.075"  pos="5.95 0 0.975"  material="stairs"/>
+    <geom name="stair_down_5"  type="box" size="0.155 0.8 0.075"  pos="6.26 0 0.825"  material="stairs"/>
+    <geom name="stair_down_6"  type="box" size="0.155 0.8 0.075"  pos="6.57 0 0.675"  material="stairs"/>
+    <geom name="stair_down_7"  type="box" size="0.155 0.8 0.075"  pos="6.88 0 0.525"  material="stairs"/>
+    <geom name="stair_down_8"  type="box" size="0.155 0.8 0.075"  pos="7.19 0 0.375"  material="stairs"/>
+    <geom name="stair_down_9"  type="box" size="0.155 0.8 0.075"  pos="7.50 0 0.225"  material="stairs"/>
+    <geom name="stair_down_10" type="box" size="0.155 0.8 0.075"  pos="7.81 0 0.075"  material="stairs"/>
+  </worldbody>
+</mujoco>
