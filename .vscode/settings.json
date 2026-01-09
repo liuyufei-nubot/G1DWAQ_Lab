@@ -8,7 +8,8 @@
         "/home/lyf/code/geoloco/IsaacLab/source/isaaclab_rl",
         "/home/lyf/code/geoloco/IsaacLab/source/isaaclab_tasks",
         "/home/lyf/code/geoloco/TienKung-Lab/rsl_rl",
-        "/home/lyf/code/geoloco/TienKung-Lab"
+        "/home/lyf/code/geoloco/TienKung-Lab",
+        "/home/lyf/code/geoloco/unitree_sdk2_python"
     ]
 
 }

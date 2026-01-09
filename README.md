@@ -15,6 +15,11 @@ python legged_lab/scripts/train.py --task=g1_rgb --headless --num_envs=4096
 python legged_lab/scripts/play.py --task=g1_rgb --load_run=<运行目录> --checkpoint=model_<迭代次数>.pt
 ```
 
+### Sim2Sim
+```bash
+python legged_lab/scripts/sim2sim_g1_rgb.py --policy <策略文件.pt> --model <MuJoCo模型.xml> --duration 100
+```
+
 ---
 
 ## G1 机器人配置

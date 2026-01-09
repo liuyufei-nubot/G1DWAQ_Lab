@@ -841,8 +841,8 @@ def main():
     MJCF_DIR = os.path.join(LEGGED_LAB_ROOT, "legged_lab/assets/unitree/g1/mjcf")
     
     # 默认路径
-    # default_checkpoint = os.path.join(LEGGED_LAB_ROOT, "logs/g1_rgb/2026-01-06_14-21-16/model_12200.pt")
-    default_checkpoint = os.path.join(LEGGED_LAB_ROOT, "logs/g1_rgb/2026-01-04_14-46-50/model_47000.pt")
+    default_checkpoint = os.path.join(LEGGED_LAB_ROOT, "logs/g1_rgb/2026-01-06_14-21-16/model_30000.pt")
+    # default_checkpoint = os.path.join(LEGGED_LAB_ROOT, "logs/g1_rgb/2026-01-04_14-46-50/model_47000.pt")
     default_model = os.path.join(MJCF_DIR, "g1_29dof_rev_1_0_daf.xml")
     
     # 获取可用场景
