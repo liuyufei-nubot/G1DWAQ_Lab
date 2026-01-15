@@ -135,13 +135,39 @@ class G1FlatAgentCfg(BaseAgentCfg):
 
 @configclass
 class G1RoughEnvCfg(G1FlatEnvCfg):
+    """
+    G1 rough terrain environment configuration for blind walking.
+    
+    This configuration enables asymmetric actor-critic training where:
+    - Actor: No height_scan (can be deployed on real robot without terrain sensor)
+    - Critic: Has height_scan as privileged information for training
+    
+    Similar to G1RgbEnvCfg but without RGB camera (pure blind walking).
+    """
 
     def __post_init__(self):
         super().__post_init__()
-        self.scene.height_scanner.enable_height_scan = True
+        
+        # Terrain configuration - same as g1_rgb for rough terrains
         self.scene.terrain_generator = ROUGH_TERRAINS_CFG
-        self.robot.actor_obs_history_length = 1
-        self.robot.critic_obs_history_length = 1
+        
+        # Height scanner configuration - asymmetric AC (key difference from G1FlatEnvCfg)
+        self.scene.height_scanner.enable_height_scan = True
+        self.scene.height_scanner.critic_only = True  # Actor is blind, Critic has terrain info
+        
+        # Privileged information for Critic (same as g1_rgb)
+        self.scene.privileged_info.enable_feet_info = True  # feet_pos + feet_vel in body frame (12 dim)
+        self.scene.privileged_info.enable_feet_contact_force = True  # contact force 3D (6 dim)
+        self.scene.privileged_info.enable_root_height = True  # root height (1 dim)
+        
+        # History length - 10 frames for temporal context (same as g1_rgb)
+        self.robot.actor_obs_history_length = 10
+        self.robot.critic_obs_history_length = 10
+        
+        # Action delay for sim-to-real transfer
+        self.domain_rand.action_delay.enable = True
+        
+        # Reward weights for rough terrain walking
         self.reward.feet_air_time.weight = 0.25
         self.reward.track_lin_vel_xy_exp.weight = 1.5
         self.reward.track_ang_vel_z_exp.weight = 1.5
@@ -150,14 +176,18 @@ class G1RoughEnvCfg(G1FlatEnvCfg):
 
 @configclass
 class G1RoughAgentCfg(BaseAgentCfg):
+    """
+    G1 rough terrain agent configuration.
+    
+    Uses ActorCritic with History Encoder for asymmetric actor-critic training.
+    Similar architecture to G1RgbAgentCfg but without visual observation processing.
+    """
     experiment_name: str = "g1_rough"
     wandb_project: str = "g1_rough"
 
     def __post_init__(self):
         super().__post_init__()
-        self.policy.class_name = "ActorCriticRecurrent"
-        self.policy.actor_hidden_dims = [256, 256, 128]
-        self.policy.critic_hidden_dims = [256, 256, 128]
-        self.policy.rnn_hidden_size = 256
-        self.policy.rnn_num_layers = 1
-        self.policy.rnn_type = "lstm"
+        # Use ActorCritic with History Encoder (no LSTM needed with history buffer)
+        self.policy.class_name = "ActorCritic"
+        self.policy.actor_hidden_dims = [512, 256, 128]
+        self.policy.critic_hidden_dims = [512, 256, 128]

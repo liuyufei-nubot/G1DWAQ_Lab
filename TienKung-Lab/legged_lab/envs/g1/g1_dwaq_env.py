@@ -16,14 +16,37 @@
 # with additional modifications by the TienKung-Lab Project,
 # and is distributed under the BSD-3-Clause license.
 
+"""
+G1 DWAQ Environment - Blind Walking with Variational Autoencoder
+
+This environment implements DWAQ (Deep Variational Autoencoder for Walking) training
+for the G1 robot. It follows the Isaac Lab interface style where step() returns
+(obs, rewards, dones, extras), while providing DWAQ-specific data through
+get_observations() and extras dict.
+
+Key DWAQ Components:
+1. Observation History Buffer: Maintains dwaq_obs_history_length frames for VAE encoder
+2. Previous Critic Observations: Used for velocity estimation supervision
+3. Isaac Lab Compatible: step() returns 4 values, DWAQ data in extras
+
+Interface:
+- step(actions) -> (obs, rewards, dones, extras)
+  - extras["observations"]["critic"] = privileged observations
+  - extras["observations"]["obs_hist"] = observation history for VAE encoder
+  - extras["observations"]["prev_critic_obs"] = previous critic obs for velocity loss
+- get_observations() -> (obs, extras)  
+- get_privileged_observations() -> (critic_obs, prev_critic_obs)
+
+Reference: DreamWaQ (https://github.com/Kingspider652/DreamWaQ-blind)
+"""
+
 from __future__ import annotations
 
 import isaaclab.sim as sim_utils
 import isaacsim.core.utils.torch as torch_utils  # type: ignore
 import numpy as np
 import torch
-import os
-from PIL import Image
+
 from isaaclab.assets.articulation import Articulation
 from isaaclab.utils import math as math_utils
 from isaaclab.envs.mdp.commands import UniformVelocityCommand, UniformVelocityCommandCfg
@@ -35,34 +58,44 @@ from isaaclab.sensors.camera import TiledCamera
 from isaaclab.sim import PhysxCfg, SimulationContext
 from isaaclab.utils.buffers import CircularBuffer, DelayBuffer
 
+
+from legged_lab.envs.g1.g1_dwaq_config import G1DwaqEnvCfg
+
 from legged_lab.envs.g1.g1_config import G1FlatEnvCfg, G1RoughEnvCfg
 from legged_lab.utils.env_utils.scene import SceneCfg
 from rsl_rl.env import VecEnv
 
 
-class G1Env(VecEnv):
+class G1DwaqEnv(VecEnv):
     """
-    G1 humanoid robot environment.
+    G1 DWAQ environment for blind walking with β-VAE.
     
-    This environment is designed for the Unitree G1 robot, following the structure
-    of TienKungEnv but using BaseEnv-style parameters without AMP or gait-phase features.
-    It supports height scanner, depth camera, and RGB camera sensors.
+    This environment follows Isaac Lab conventions:
+    - step() returns (obs, rewards, dones, extras)
+    - DWAQ-specific data (obs_hist, prev_critic_obs) passed via extras
+    
+    The VAE encoder uses observation history to infer hidden environment
+    states (friction, terrain, etc.) for blind walking on rough terrain.
     """
 
     def __init__(
         self,
-        cfg: G1FlatEnvCfg | G1RoughEnvCfg ,
+        cfg: G1DwaqEnvCfg,
         headless: bool,
     ):
-        self.cfg: G1FlatEnvCfg | G1RoughEnvCfg 
+        self.cfg: G1DwaqEnvCfg
 
         self.cfg = cfg
         self.headless = headless
         self.device = self.cfg.device
         self.physics_dt = self.cfg.sim.dt
         self.step_dt = self.cfg.sim.decimation * self.cfg.sim.dt
+        self.dt = self.step_dt  # Alias for runner compatibility
         self.num_envs = self.cfg.scene.num_envs
         self.seed(cfg.scene.seed)
+        
+        # DWAQ-specific: Observation history length for VAE encoder
+        self.dwaq_obs_history_length = getattr(self.cfg.robot, "dwaq_obs_history_length", 5)
 
         # Initialize simulation context
         sim_cfg = sim_utils.SimulationCfg(
@@ -262,6 +295,24 @@ class G1Env(VecEnv):
             self.feet_pos_in_body[:, i, :] = math_utils.quat_apply_inverse(root_quat_w, feet_pos_translated[:, i, :])
             self.feet_vel_in_body[:, i, :] = math_utils.quat_apply_inverse(root_quat_w, feet_vel_translated[:, i, :])
 
+    def _get_current_critic_obs_with_height_scan(self):
+        """
+        Get current critic observations with height scan (if enabled).
+        This method does NOT update any buffers - use for prev_critic_obs.
+        """
+        _, current_critic_obs = self.compute_current_observations()
+        
+        # Add height scan if enabled (critic always gets height scan)
+        if self.cfg.scene.height_scanner.enable_height_scan:
+            height_scan = (
+                self.height_scanner.data.pos_w[:, 2].unsqueeze(1)
+                - self.height_scanner.data.ray_hits_w[..., 2]
+                - self.cfg.normalization.height_scan_offset
+            ) * self.obs_scales.height_scan
+            current_critic_obs = torch.cat([current_critic_obs, height_scan], dim=-1)
+        
+        return torch.clip(current_critic_obs, -self.clip_obs, self.clip_obs)
+
     def compute_observations(self):
         """Compute full observations including history and sensor data."""
         current_actor_obs, current_critic_obs = self.compute_current_observations()
@@ -270,6 +321,10 @@ class G1Env(VecEnv):
 
         self.actor_obs_buffer.append(current_actor_obs)
         self.critic_obs_buffer.append(current_critic_obs)
+        
+        # DWAQ: Also append to observation history buffer for VAE encoder
+        # Use raw observations (without height scan) for consistent encoder input
+        self.dwaq_obs_history_buffer.append(current_actor_obs)
 
         actor_obs = self.actor_obs_buffer.buffer.reshape(self.num_envs, -1)
         critic_obs = self.critic_obs_buffer.buffer.reshape(self.num_envs, -1)
@@ -320,14 +375,45 @@ class G1Env(VecEnv):
         self.command_generator.reset(env_ids)
         self.actor_obs_buffer.reset(env_ids)
         self.critic_obs_buffer.reset(env_ids)
+        self.dwaq_obs_history_buffer.reset(env_ids)  # DWAQ: Reset observation history
         self.action_buffer.reset(env_ids)
         self.episode_length_buf[env_ids] = 0
+        
+        # DWAQ: Reset previous critic obs for reset environments
+        # Fill with zeros to avoid using stale data
+        self.prev_critic_obs[env_ids] = 0.0
 
         self.scene.write_data_to_sim()
         self.sim.forward()
 
     def step(self, actions: torch.Tensor):
-        """Execute one environment step."""
+        """
+        Execute one environment step.
+        
+        Returns:
+            obs: Actor observations [num_envs, num_obs]
+            rewards: Reward values [num_envs]
+            dones: Done flags [num_envs]
+            extras: Dict containing:
+                - observations.critic: Privileged observations
+                - observations.obs_hist: DWAQ observation history for VAE encoder
+                - observations.prev_critic_obs: Previous critic obs for velocity loss
+                - time_outs: Timeout flags
+                - log: Episode statistics
+        
+        This follows Isaac Lab convention: step() returns 4 values.
+        DWAQ-specific data is passed through extras dict.
+        
+        DWAQ Timing (matching original DreamWaQ):
+        1. At step start: save current critic_obs as prev_critic_obs (WITHOUT updating buffers)
+        2. Execute action
+        3. At step end: compute new observations (updates buffers)
+        4. Return: new obs + prev_critic_obs from step start
+        """
+        # Store previous critic obs BEFORE stepping (for velocity estimation loss)
+        # Use _get_current_critic_obs_with_height_scan to avoid double-appending to buffers
+        self.prev_critic_obs = self._get_current_critic_obs_with_height_scan().clone()
+        
         delayed_actions = self.action_buffer.compute(actions)
 
         clipped_actions = torch.clip(delayed_actions, -self.clip_actions, self.clip_actions).to(self.device)
@@ -344,6 +430,7 @@ class G1Env(VecEnv):
             self.sim.render()
 
         self.episode_length_buf += 1
+
         self.command_generator.compute(self.step_dt)
         if "interval" in self.event_manager.available_modes:
             self.event_manager.apply(mode="interval", dt=self.step_dt)
@@ -354,8 +441,19 @@ class G1Env(VecEnv):
         self.reset(env_ids)
 
         actor_obs, critic_obs = self.compute_observations()
-        self.extras["observations"] = {"critic": critic_obs}
+        
+        # DWAQ: Get observation history for VAE encoder
+        obs_hist = self.dwaq_obs_history_buffer.buffer.reshape(self.num_envs, -1)
+        
+        # Pack extras following Isaac Lab convention
+        self.extras["observations"] = {
+            "critic": critic_obs,
+            "obs_hist": obs_hist,  # DWAQ: for VAE encoder
+            "prev_critic_obs": self.prev_critic_obs,  # DWAQ: for velocity loss
+        }
+        self.extras["time_outs"] = self.time_out_buf
 
+        # Isaac Lab style: return 4 values
         return actor_obs, reward_buf, self.reset_buf, self.extras
 
     def check_reset(self):
@@ -378,7 +476,7 @@ class G1Env(VecEnv):
         return reset_buf, time_out_buf
 
     def init_obs_buffer(self):
-        """Initialize observation buffers and noise vectors."""
+        """Initialize observation buffers and noise vectors for DWAQ."""
         if self.add_noise:
             actor_obs, _ = self.compute_current_observations()
             noise_vec = torch.zeros_like(actor_obs[0])
@@ -403,12 +501,35 @@ class G1Env(VecEnv):
                 height_scan_noise_vec[:] = noise_scales.height_scan * self.obs_scales.height_scan
                 self.height_scan_noise_vec = height_scan_noise_vec
 
+        # Standard observation buffers (for actor/critic history)
         self.actor_obs_buffer = CircularBuffer(
             max_len=self.cfg.robot.actor_obs_history_length, batch_size=self.num_envs, device=self.device
         )
         self.critic_obs_buffer = CircularBuffer(
             max_len=self.cfg.robot.critic_obs_history_length, batch_size=self.num_envs, device=self.device
         )
+        
+        # DWAQ-specific: Observation history buffer for VAE encoder
+        # This stores dwaq_obs_history_length frames of raw actor observations
+        self.dwaq_obs_history_buffer = CircularBuffer(
+            max_len=self.dwaq_obs_history_length, batch_size=self.num_envs, device=self.device
+        )
+        
+        # DWAQ-specific: Previous critic observations for velocity estimation loss
+        # Initialize with zeros, will be updated each step before stepping
+        actor_obs, critic_obs = self.compute_current_observations()
+        self._num_obs = actor_obs.shape[-1]
+        self._num_privileged_obs = critic_obs.shape[-1]
+        
+        # Calculate full privileged obs dimension (including height scan)
+        height_scan_dim = 0
+        if self.cfg.scene.height_scanner.enable_height_scan:
+            height_scan_dim = self.height_scanner.data.ray_hits_w.shape[1]
+        full_privileged_obs_dim = self._num_privileged_obs + height_scan_dim
+        
+        # Initialize prev_critic_obs with FULL privileged obs dimension (including height scan)
+        # This is required because storage is initialized with num_privileged_obs property
+        self.prev_critic_obs = torch.zeros(self.num_envs, full_privileged_obs_dim, device=self.device)
 
     def update_terrain_levels(self, env_ids):
         """Update terrain curriculum levels based on robot progress."""
@@ -424,10 +545,64 @@ class G1Env(VecEnv):
         return extras
 
     def get_observations(self):
-        """Get current observations for inference."""
+        """
+        Get current observations for DWAQ training initialization.
+        
+        Returns:
+            obs: Actor observations [num_envs, num_obs]
+            obs_hist: DWAQ observation history for VAE encoder [num_envs, num_obs * dwaq_obs_history_length]
+            
+        Note: This is called at training start to get initial observations.
+        It updates buffers once to initialize the observation history.
+        The runner calls: actions = alg.act(obs, critic_obs, prev_critic_obs, obs_hist)
+        """
         actor_obs, critic_obs = self.compute_observations()
-        self.extras["observations"] = {"critic": critic_obs}
-        return actor_obs, self.extras
+        obs_hist = self.dwaq_obs_history_buffer.buffer.reshape(self.num_envs, -1)
+        
+        self.extras["observations"] = {
+            "critic": critic_obs,
+            "obs_hist": obs_hist,
+            "prev_critic_obs": self.prev_critic_obs,
+        }
+        return actor_obs, obs_hist
+    
+    def get_privileged_observations(self):
+        """
+        Get privileged observations for DWAQ critic and velocity loss.
+        
+        Returns:
+            critic_obs: Privileged observations [num_envs, num_privileged_obs]
+            prev_critic_obs: Previous critic observations for velocity estimation [num_envs, num_privileged_obs]
+            
+        Note: This method does NOT update buffers. It returns the last computed
+        critic_obs (from the buffer) plus prev_critic_obs.
+        prev_critic_obs contains velocity info from previous timestep,
+        used to supervise the VAE encoder's velocity prediction.
+        """
+        # Get critic obs from buffer without updating (no append)
+        critic_obs = self._get_current_critic_obs_with_height_scan()
+        return critic_obs, self.prev_critic_obs
+    
+    # ==================== DWAQ Required Properties ====================
+    
+    @property
+    def num_obs(self) -> int:
+        """Number of actor observations (without height scan for blind walking)."""
+        return self._num_obs
+    
+    @property
+    def num_privileged_obs(self) -> int:
+        """Number of privileged observations for critic (includes velocity, height scan)."""
+        # Add height scan dimension if enabled
+        height_scan_dim = 0
+        if self.cfg.scene.height_scanner.enable_height_scan:
+            height_scan_dim = self.height_scanner.data.ray_hits_w.shape[1]
+        return self._num_privileged_obs + height_scan_dim
+    
+    @property
+    def num_obs_hist(self) -> int:
+        """Number of observation history frames for DWAQ VAE encoder."""
+        return self.dwaq_obs_history_length
 
     @staticmethod
     def seed(seed: int = -1) -> int:

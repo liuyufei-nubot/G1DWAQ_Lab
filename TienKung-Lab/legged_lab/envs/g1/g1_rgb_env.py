@@ -357,15 +357,6 @@ class G1RgbEnv(VecEnv):
                 self.extras["log"].update(terrain_levels)
 
         self.scene.reset(env_ids)
-        # # Debug: print camera and parent (link) poses to help verify mounting
-        # try:
-        #     if getattr(self, "rgb_camera", None) is not None and self._debug_saved_frames > -1:
-        #         # pick first env id to inspect
-        #         inspect_env = int(env_ids[0].item()) if hasattr(env_ids, "__len__") else int(env_ids)
-        #         self._debug_print_camera_and_parent(inspect_env)
-        # except Exception:
-        #     # don't fail reset on debug logging
-        #     pass
         if "reset" in self.event_manager.available_modes:
             self.event_manager.apply(
                 mode="reset",

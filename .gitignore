@@ -8,3 +8,6 @@ wandb
 MUJOCO_LOG.TXT
 .history
 IsaacLab
+Depth-Anything-V2
+Reference
+sim2sim_ref

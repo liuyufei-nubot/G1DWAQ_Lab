@@ -265,9 +265,9 @@ class G1RgbSim2SimCfg:
         sim_duration = 100.0
         num_actions = 29
         num_obs_per_step = 96      # 3+3+3+29+29+29 = 96 (无 gait phase)
-        # 注意: g1_rgb 的 actor_obs_history_length = 1 (由 env 配置)
-        # 但 history encoder 的 history_dim 由 runner 中的 obs_history_len * num_obs 决定
-        # g1_rgb env 设置 obs_history_len = 1，所以 history_dim = 96
+        # 注意: g1_rgb 的 actor_obs_history_length = 10 (由 env 配置)
+        # history encoder 的 history_dim 由 runner 中的 obs_history_len * num_obs 决定
+        # g1_rgb env 设置 obs_history_len = 10，所以 history_dim = 960
         actor_obs_history_length = 1  # 与 g1_rgb_config.py 保持一致
         dt = 0.005
         decimation = 4
@@ -841,8 +841,8 @@ def main():
     MJCF_DIR = os.path.join(LEGGED_LAB_ROOT, "legged_lab/assets/unitree/g1/mjcf")
     
     # 默认路径
-    default_checkpoint = os.path.join(LEGGED_LAB_ROOT, "logs/g1_rgb/2026-01-06_14-21-16/model_30000.pt")
-    # default_checkpoint = os.path.join(LEGGED_LAB_ROOT, "logs/g1_rgb/2026-01-04_14-46-50/model_47000.pt")
+    # default_checkpoint = os.path.join(LEGGED_LAB_ROOT, "logs/g1_rgb/2026-01-06_14-21-16/model_30000.pt")
+    default_checkpoint = os.path.join(LEGGED_LAB_ROOT, "logs/g1_rgb/2026-01-04_14-46-50/model_47000.pt")
     default_model = os.path.join(MJCF_DIR, "g1_29dof_rev_1_0_daf.xml")
     
     # 获取可用场景

@@ -24,7 +24,7 @@ import torch
 from isaaclab.app import AppLauncher
 
 from legged_lab.utils import task_registry
-from rsl_rl.runners import AmpOnPolicyRunner, OnPolicyRunner, AMPOnPolicyRunnerMulti
+from rsl_rl.runners import AmpOnPolicyRunner, OnPolicyRunner, AMPOnPolicyRunnerMulti, DWAQOnPolicyRunner
 
 # local imports
 import legged_lab.utils.cli_args as cli_args  # isort: skip
@@ -278,11 +278,25 @@ def play():
     # Check if using ActorCriticDepth which requires history and optionally rgb_image
     use_depth_policy = hasattr(runner.alg.policy, 'history_encoder')
     
+    # Check if using DWAQ policy which requires obs_history from environment
+    use_dwaq_policy = hasattr(runner.alg.policy, 'cenet_forward')
+    
     # Check if RGB camera is available (from env, not runner)
     use_rgb = hasattr(env, 'rgb_camera') and env.rgb_camera is not None
-    print(f"[INFO] use_depth_policy: {use_depth_policy}, use_rgb: {use_rgb}")
+    print(f"[INFO] use_depth_policy: {use_depth_policy}, use_dwaq_policy: {use_dwaq_policy}, use_rgb: {use_rgb}")
     
-    if use_depth_policy:
+    if use_dwaq_policy:
+        # DWAQ policy needs obs_history from environment
+        runner.eval_mode()
+        
+        def policy_fn(obs):
+            # Get obs_history from environment (DWAQ env stores it internally)
+            _, obs_hist = env.get_observations()
+            obs_hist = obs_hist.to(env.device)
+            return runner.alg.policy.act_inference(obs, obs_hist)
+        
+        policy = policy_fn
+    elif use_depth_policy:
         # Initialize trajectory history buffer
         # Get obs_history_len from env (preferred) or runner
         obs_history_len = getattr(env, 'obs_history_len', getattr(runner, 'obs_history_len', 1))
@@ -319,8 +333,8 @@ def play():
     else:
         policy = runner.get_inference_policy(device=env.device)
 
-    # Skip JIT/ONNX export for ActorCriticDepth (complex architecture)
-    if not use_depth_policy:
+    # Skip JIT/ONNX export for ActorCriticDepth and DWAQ (complex architectures)
+    if not use_depth_policy and not use_dwaq_policy:
         export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
         export_policy_as_jit(runner.alg.policy, runner.obs_normalizer, path=export_model_dir, filename="policy.pt")
         export_policy_as_onnx(
@@ -343,7 +357,14 @@ def play():
 
         with torch.inference_mode():
             actions = policy(obs)
-            obs, _, dones, _ = env.step(actions)
+            
+            # Handle different env.step() return formats
+            if use_dwaq_policy:
+                # DWAQ: obs, privileged_obs, prev_privileged_obs, obs_hist, rewards, dones, extras
+                obs, _, _, _, _, dones, _ = env.step(actions)
+            else:
+                # Standard: obs, _, dones, _
+                obs, _, dones, _ = env.step(actions)
             
             # Reset history for terminated environments
             if use_depth_policy:

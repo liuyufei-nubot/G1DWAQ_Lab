@@ -21,7 +21,7 @@ import argparse
 from isaaclab.app import AppLauncher
 
 from legged_lab.utils import task_registry
-from rsl_rl.runners import AmpOnPolicyRunner, OnPolicyRunner, AMPOnPolicyRunnerMulti
+from rsl_rl.runners import AmpOnPolicyRunner, OnPolicyRunner, AMPOnPolicyRunnerMulti, DWAQOnPolicyRunner
 
 # local imports
 import legged_lab.utils.cli_args as cli_args  # isort: skip

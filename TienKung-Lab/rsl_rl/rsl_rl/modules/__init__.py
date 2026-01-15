@@ -21,6 +21,7 @@
 from .actor_critic import ActorCritic
 from .actor_critic_recurrent import ActorCriticRecurrent
 from .actor_critic_depth import ActorCriticDepth
+from .actor_critic_DWAQ import ActorCritic_DWAQ
 from .discriminator import Discriminator
 from .normalizer import EmpiricalNormalization
 from .rnd import RandomNetworkDistillation
@@ -31,6 +32,7 @@ __all__ = [
     "ActorCritic",
     "ActorCriticRecurrent",
     "ActorCriticDepth",
+    "ActorCritic_DWAQ",
     "EmpiricalNormalization",
     "RandomNetworkDistillation",
     "StudentTeacher",

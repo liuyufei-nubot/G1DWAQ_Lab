@@ -7,6 +7,11 @@
 ### 训练
 ```bash
 cd TienKung-Lab
+
+python legged_lab/scripts/train.py --task=g1_dwaq --headless --num_envs=4096 --max_iterations=10000
+
+python legged_lab/scripts/train.py --task=g1_rough --headless --num_envs=4096
+
 python legged_lab/scripts/train.py --task=g1_rgb --headless --num_envs=4096
 ```
 
@@ -675,6 +680,53 @@ torch.jit.save(torch.jit.script(policy), "policy.pt")
 ---
 
 ## 开发日志
+
+### 2026-01-10: G1RoughEnvCfg 非对称 Actor-Critic 实现
+
+#### 修改目的
+实现盲走上下台阶等地形的运动能力，使 `G1RoughEnvCfg` 与 `G1RgbEnvCfg` 的观测结构保持一致。
+
+#### 设计理念
+| 配置 | Actor 输入 | Critic 特权信息 | 用途 |
+|------|-----------|----------------|------|
+| **G1FlatEnvCfg** | 本体感知 | lin_vel + feet_contact | 平地行走 |
+| **G1RoughEnvCfg** | 本体感知（盲） | height_scan + 脚部状态 + root_height | 盲走台阶等地形 |
+| **G1RgbEnvCfg** | 本体感知 + RGB | height_scan + 脚部状态 + root_height | 视觉引导地形行走 |
+
+#### 修改内容
+
+**1. g1_env.py**
+- 添加 `_compute_feet_state()` 方法：计算脚部在 body frame 下的位置和速度
+- 添加 `feet_pos_in_body` 和 `feet_vel_in_body` buffer
+- 修改 `compute_current_observations()`：添加特权信息到 critic_obs
+  - `feet_pos_in_body` (6 dim)
+  - `feet_vel_in_body` (6 dim)
+  - `feet_contact_force` (6 dim)
+  - `root_height` (1 dim)
+- 修改 `compute_observations()`：添加 `critic_only` 检查，当 `height_scanner.critic_only=True` 时，actor 不获得 height_scan
+
+**2. g1_config.py - G1RoughEnvCfg**
+```python
+# 非对称 AC 设置
+self.scene.height_scanner.enable_height_scan = True
+self.scene.height_scanner.critic_only = True  # Actor 是盲的，Critic 有地形信息
+
+# 特权信息
+self.scene.privileged_info.enable_feet_info = True
+self.scene.privileged_info.enable_feet_contact_force = True
+self.scene.privileged_info.enable_root_height = True
+
+# 历史长度 10（与 g1_rgb 一致）
+self.robot.actor_obs_history_length = 10
+self.robot.critic_obs_history_length = 10
+
+# 动作延迟
+self.domain_rand.action_delay.enable = True
+```
+
+**3. g1_config.py - G1RoughAgentCfg**
+- 改用 `ActorCritic`（配合 History Encoder）
+- 网络结构改为 `[512, 256, 128]`
 
 ### 2026-01-06: RGB 相机配置修复
 

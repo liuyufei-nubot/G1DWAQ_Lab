@@ -75,12 +75,22 @@ class BaseSceneCfg:
 
 
 @configclass
+class GaitPhaseCfg:
+    """Configuration for gait phase observation (clock signal)."""
+    enable: bool = False           # Whether to add sin/cos phase to observations
+    period: float = 0.8            # Gait period in seconds
+    offset: float = 0.5            # Phase offset between left and right leg (0.5 = alternating)
+
+
+@configclass
 class RobotCfg:
     actor_obs_history_length: int = 10
     critic_obs_history_length: int = 10
+    dwaq_obs_history_length: int = 10  # Observation history length for DWAQ encoder
     action_scale: float = 0.25
     terminate_contacts_body_names: list = []
     feet_body_names: list = []
+    gait_phase: GaitPhaseCfg = GaitPhaseCfg()  # Gait phase configuration
 
 
 @configclass

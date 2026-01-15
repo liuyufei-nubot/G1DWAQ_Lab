@@ -305,3 +305,228 @@ def gait_feet_frc_support_perio(env: TienKungEnv, delta_t: float = 0.02) -> torc
     left_frc_score = left_frc_support_mask * (1 - torch.exp(-10 * torch.square(env.avg_feet_force_per_step[:, 0])))
     right_frc_score = right_frc_support_mask * (1 - torch.exp(-10 * torch.square(env.avg_feet_force_per_step[:, 1])))
     return left_frc_score + right_frc_score
+
+
+# ======================== DWAQ Rewards ========================
+# These rewards are adapted from the DreamWaQ project for blind walking.
+
+
+def alive(env: BaseEnv) -> torch.Tensor:
+    """Reward for staying alive.
+    
+    A simple constant reward that encourages the robot to not terminate early.
+    Reference: DreamWaQ (HumanoidDreamWaq/legged_gym/envs/g1/g1_env.py)
+    """
+    return torch.ones(env.num_envs, device=env.device, dtype=torch.float)
+
+
+def gait_phase_contact(
+    env: BaseEnv, sensor_cfg: SceneEntityCfg, stance_threshold: float = 0.55
+) -> torch.Tensor:
+    """Reward for foot contact matching the expected gait phase.
+    
+    Rewards the robot when foot contact status matches the expected stance/swing phase.
+    During stance phase (phase < stance_threshold), foot should be in contact.
+    During swing phase (phase >= stance_threshold), foot should be in the air.
+    
+    Args:
+        env: Environment with gait phase information.
+        sensor_cfg: Contact sensor configuration for feet.
+        stance_threshold: Phase threshold below which the foot should be in stance.
+        
+    Reference: DreamWaQ _reward_contact()
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
+    
+    # Check contact for each foot
+    contact = torch.norm(net_contact_forces, dim=-1) > 1.0  # (num_envs, num_feet)
+    
+    # Get gait phase for each foot
+    # For biped: phase_left and phase_right
+    phase_left = env.phase_left if hasattr(env, 'phase_left') else env.phase
+    phase_right = env.phase_right if hasattr(env, 'phase_right') else env.phase
+    leg_phase = torch.stack([phase_left, phase_right], dim=-1)  # (num_envs, 2)
+    
+    # Expected stance: phase < stance_threshold
+    is_stance = leg_phase < stance_threshold
+    
+    # Reward: 1 if contact matches expected phase, 0 otherwise
+    # XOR gives True when they don't match, so we negate it
+    phase_match = ~(contact ^ is_stance)  # (num_envs, num_feet)
+    
+    return torch.sum(phase_match.float(), dim=-1)  # Sum over feet
+
+
+def feet_swing_height(
+    env: BaseEnv, 
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    target_height: float = 0.08
+) -> torch.Tensor:
+    """Penalize swing foot height deviation from target.
+    
+    During swing phase (when foot is not in contact), penalize if the foot
+    is not at the target height. This encourages proper foot clearance.
+    
+    Args:
+        env: Environment.
+        sensor_cfg: Contact sensor configuration for feet.
+        asset_cfg: Robot configuration with body_ids for feet.
+        target_height: Target height for swing foot (default 0.08m).
+        
+    Reference: DreamWaQ _reward_feet_swing_height()
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Get contact status
+    net_contact_forces = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
+    contact = torch.norm(net_contact_forces, dim=-1) > 1.0  # (num_envs, num_feet)
+    
+    # Get feet positions (z-coordinate)
+    feet_pos_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]  # (num_envs, num_feet)
+    
+    # Penalize height error only during swing phase (not in contact)
+    pos_error = torch.square(feet_pos_z - target_height) * (~contact).float()
+    
+    return torch.sum(pos_error, dim=-1)
+
+
+def base_height(
+    env: BaseEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    target_height: float = 0.78
+) -> torch.Tensor:
+    """Penalize base height deviation from target.
+    
+    Encourages the robot to maintain a specific base height during locomotion.
+    
+    Args:
+        env: Environment.
+        asset_cfg: Robot configuration.
+        target_height: Target base height (default 0.78m for G1).
+        
+    Reference: DreamWaQ _reward_base_height()
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    current_height = asset.data.root_pos_w[:, 2]
+    return torch.square(current_height - target_height)
+
+
+def contact_no_vel(
+    env: BaseEnv,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Penalize foot velocity when in contact with ground.
+    
+    During stance phase (when foot is in contact), the foot should have
+    zero velocity to prevent slipping.
+    
+    Args:
+        env: Environment.
+        sensor_cfg: Contact sensor configuration for feet.
+        asset_cfg: Robot configuration with body_ids for feet.
+        
+    Reference: DreamWaQ _reward_contact_no_vel()
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Get contact status
+    net_contact_forces = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
+    contact = torch.norm(net_contact_forces, dim=-1) > 1.0  # (num_envs, num_feet)
+    
+    # Get feet velocities
+    feet_vel = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :]  # (num_envs, num_feet, 3)
+    
+    # Penalize velocity only when in contact
+    contact_feet_vel = feet_vel * contact.unsqueeze(-1)
+    penalize = torch.sum(torch.square(contact_feet_vel), dim=-1)  # Sum over xyz
+    
+    return torch.sum(penalize, dim=-1)  # Sum over feet
+
+
+def joint_pos_limits(
+    env: BaseEnv, 
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    soft_ratio: float = 0.9
+) -> torch.Tensor:
+    """Penalize joint positions near or exceeding limits.
+    
+    Args:
+        env: Environment.
+        asset_cfg: Robot configuration.
+        soft_ratio: Ratio of joint limits to start penalizing (default 0.9).
+        
+    Reference: DreamWaQ _reward_dof_pos_limits()
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Get joint limits
+    joint_pos_limits = asset.data.soft_joint_pos_limits[:, asset_cfg.joint_ids, :]  # (num_envs, num_joints, 2)
+    lower_limits = joint_pos_limits[:, :, 0] * soft_ratio
+    upper_limits = joint_pos_limits[:, :, 1] * soft_ratio
+    
+    # Current joint positions
+    joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    
+    # Penalize exceeding soft limits
+    out_of_limits = torch.zeros_like(joint_pos)
+    out_of_limits += (lower_limits - joint_pos).clamp(min=0.0)
+    out_of_limits += (joint_pos - upper_limits).clamp(min=0.0)
+    
+    return torch.sum(out_of_limits, dim=-1)
+
+
+def idle_when_commanded(
+    env: BaseEnv | TienKungEnv | G1Env,
+    cmd_threshold: float = 0.2,
+    vel_threshold: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize being idle when a velocity command is given.
+    
+    This reward function detects "lazy standing" behavior where the robot receives
+    a movement command but remains stationary. It returns 1.0 when the robot should
+    be moving but is not, enabling a negative weight penalty.
+    
+    Args:
+        env: Environment instance.
+        cmd_threshold: Minimum command magnitude to be considered "commanded to move".
+            Commands below this threshold are ignored (robot is allowed to stand).
+        vel_threshold: Maximum velocity magnitude to be considered "idle/stationary".
+            If actual velocity is below this, the robot is considered not moving.
+        asset_cfg: Robot configuration.
+    
+    Returns:
+        Tensor of shape (num_envs,) with values:
+        - 1.0 if commanded to move but idle (should be penalized)
+        - 0.0 otherwise (no penalty)
+    
+    Example:
+        idle_penalty = RewTerm(
+            func=mdp.idle_when_commanded,
+            weight=-2.0,
+            params={"cmd_threshold": 0.2, "vel_threshold": 0.1}
+        )
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Get velocity command (xy components)
+    cmd_xy = env.command_generator.command[:, :2]
+    cmd_magnitude = torch.linalg.norm(cmd_xy, dim=-1)
+    
+    # Get actual root velocity in yaw frame (same as track_lin_vel_xy uses)
+    vel_yaw = math_utils.quat_apply_inverse(
+        math_utils.yaw_quat(asset.data.root_quat_w), asset.data.root_lin_vel_w[:, :3]
+    )
+    vel_magnitude = torch.linalg.norm(vel_yaw[:, :2], dim=-1)
+    
+    # Detect "commanded but idle" condition
+    is_commanded = cmd_magnitude > cmd_threshold  # Should be moving
+    is_idle = vel_magnitude < vel_threshold       # But not moving
+    
+    return (is_commanded & is_idle).float()
+
