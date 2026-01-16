@@ -212,6 +212,14 @@ class G1DwaqEnv(VecEnv):
         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.sim_step_counter = 0
         self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        
+        # Initialize gait phase buffers for bipedal walking
+        # phase: normalized gait phase [0, 1)
+        # phase_left/phase_right: phase for each leg (offset by gait_phase.offset)
+        self.phase = torch.zeros(self.num_envs, device=self.device)
+        self.phase_left = torch.zeros(self.num_envs, device=self.device)
+        self.phase_right = torch.zeros(self.num_envs, device=self.device)
+        self.leg_phase = torch.zeros(self.num_envs, 2, device=self.device)
 
         self.init_obs_buffer()
 
@@ -227,17 +235,24 @@ class G1DwaqEnv(VecEnv):
         joint_vel = robot.data.joint_vel - robot.data.default_joint_vel
         action = self.action_buffer._circular_buffer.buffer[:, -1, :]
 
-        current_actor_obs = torch.cat(
-            [
-                ang_vel * self.obs_scales.ang_vel,
-                projected_gravity * self.obs_scales.projected_gravity,
-                command * self.obs_scales.commands,
-                joint_pos * self.obs_scales.joint_pos,
-                joint_vel * self.obs_scales.joint_vel,
-                action * self.obs_scales.actions,
-            ],
-            dim=-1,
-        )
+        # Build actor observation with optional gait phase information
+        obs_components = [
+            ang_vel * self.obs_scales.ang_vel,
+            projected_gravity * self.obs_scales.projected_gravity,
+            command * self.obs_scales.commands,
+            joint_pos * self.obs_scales.joint_pos,
+            joint_vel * self.obs_scales.joint_vel,
+            action * self.obs_scales.actions,
+        ]
+        
+        # Add gait phase information if enabled (参照 TienKung 的做法)
+        # 输入：leg_phase [num_envs, 2] - 左右腿的相位值 [0, 1)
+        # 输出：sin 和 cos 的融合表示，便于网络学习周期性信息
+        if self.cfg.robot.gait_phase.enable:
+            obs_components.append(torch.sin(2 * torch.pi * self.leg_phase))  # sin(phase) for left and right legs
+            obs_components.append(torch.cos(2 * torch.pi * self.leg_phase))  # cos(phase) for left and right legs
+        
+        current_actor_obs = torch.cat(obs_components, dim=-1)
 
         root_lin_vel = robot.data.root_lin_vel_b
         feet_contact = torch.max(torch.norm(net_contact_forces[:, :, self.feet_cfg.body_ids], dim=-1), dim=1)[0] > 0.5
@@ -379,6 +394,14 @@ class G1DwaqEnv(VecEnv):
         self.action_buffer.reset(env_ids)
         self.episode_length_buf[env_ids] = 0
         
+        # Reset gait phase for reset environments (only if gait is enabled)
+        if self.cfg.robot.gait_phase.enable:
+            self.phase[env_ids] = 0.0
+            self.phase_left[env_ids] = 0.0
+            self.phase_right[env_ids] = self.cfg.robot.gait_phase.offset
+            self.leg_phase[env_ids, 0] = 0.0
+            self.leg_phase[env_ids, 1] = self.cfg.robot.gait_phase.offset
+        
         # DWAQ: Reset previous critic obs for reset environments
         # Fill with zeros to avoid using stale data
         self.prev_critic_obs[env_ids] = 0.0
@@ -430,6 +453,9 @@ class G1DwaqEnv(VecEnv):
             self.sim.render()
 
         self.episode_length_buf += 1
+        
+        # Update gait phase for bipedal walking rewards
+        self._update_gait_phase()
 
         self.command_generator.compute(self.step_dt)
         if "interval" in self.event_manager.available_modes:
@@ -455,6 +481,37 @@ class G1DwaqEnv(VecEnv):
 
         # Isaac Lab style: return 4 values
         return actor_obs, reward_buf, self.reset_buf, self.extras
+
+    def _update_gait_phase(self):
+        """Update gait phase for bipedal walking.
+        
+        Computes the normalized gait phase [0, 1) based on episode time.
+        Left and right legs have a phase offset (default 0.5 = alternating gait).
+        
+        The gait phase is used by gait_phase_contact reward to encourage
+        proper stance/swing timing for each leg.
+        
+        Reference: DreamWaQ _post_physics_step_callback()
+        """
+        gait_cfg = self.cfg.robot.gait_phase
+        if not gait_cfg.enable:
+            return
+            
+        period = gait_cfg.period  # Gait cycle period in seconds (e.g., 0.8s)
+        offset = gait_cfg.offset  # Phase offset between legs (e.g., 0.5 = 50%)
+        
+        # Compute normalized phase from episode time
+        # t = episode_length * step_dt, phase = (t % period) / period
+        t = self.episode_length_buf.float() * self.step_dt
+        self.phase = (t % period) / period
+        
+        # Left leg uses base phase, right leg is offset
+        self.phase_left = self.phase
+        self.phase_right = (self.phase + offset) % 1.0
+        
+        # Stack for convenience (used by some reward functions)
+        self.leg_phase[:, 0] = self.phase_left
+        self.leg_phase[:, 1] = self.phase_right
 
     def check_reset(self):
         """Check termination conditions for all environments."""

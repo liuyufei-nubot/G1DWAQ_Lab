@@ -335,18 +335,21 @@ def gait_phase_contact(
         stance_threshold: Phase threshold below which the foot should be in stance.
         
     Reference: DreamWaQ _reward_contact()
+    
+    Note: This function uses env.leg_phase which should be [num_envs, num_feet] tensor
+    where leg_phase[:, 0] = phase_left and leg_phase[:, 1] = phase_right.
+    The sensor_cfg.body_ids should match the same ordering (left foot first, right foot second).
     """
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     net_contact_forces = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
     
-    # Check contact for each foot
-    contact = torch.norm(net_contact_forces, dim=-1) > 1.0  # (num_envs, num_feet)
+    # Check contact for each foot (use z-component like original DreamWaQ)
+    # Original: contact = self.contact_forces[:, self.feet_indices[i], 2] > 1
+    contact = net_contact_forces[:, :, 2] > 1.0  # (num_envs, num_feet), z-direction force
     
-    # Get gait phase for each foot
-    # For biped: phase_left and phase_right
-    phase_left = env.phase_left if hasattr(env, 'phase_left') else env.phase
-    phase_right = env.phase_right if hasattr(env, 'phase_right') else env.phase
-    leg_phase = torch.stack([phase_left, phase_right], dim=-1)  # (num_envs, 2)
+    # Use leg_phase directly from environment
+    # leg_phase shape: (num_envs, 2) where [:, 0] = left, [:, 1] = right
+    leg_phase = env.leg_phase
     
     # Expected stance: phase < stance_threshold
     is_stance = leg_phase < stance_threshold

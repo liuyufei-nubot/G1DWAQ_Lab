@@ -287,3 +287,81 @@ DWAQ_TERRAINS_CFG = TerrainGeneratorCfg(
         ),
     },
 )
+
+
+# ========== DWAQ 高难度: 窄台阶 (20cm宽度) ==========
+# 用于训练后期，resume 时切换使用
+DWAQ_HARD_TERRAINS_CFG = TerrainGeneratorCfg(
+    curriculum=True,
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        # ========== 上台阶 - 35% (窄台阶 20cm) ==========
+        "stairs_up_20": terrain_gen.MeshPyramidStairsTerrainCfg(
+            proportion=0.12,
+            step_height_range=(0.0, 0.25),  # 最高 25cm
+            step_width=0.20,  # 20cm 窄台阶
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        "stairs_up_24": terrain_gen.MeshPyramidStairsTerrainCfg(
+            proportion=0.12,
+            step_height_range=(0.0, 0.25),
+            step_width=0.24,  # 24cm
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        "stairs_up_28": terrain_gen.MeshPyramidStairsTerrainCfg(
+            proportion=0.11,
+            step_height_range=(0.0, 0.23),
+            step_width=0.28,
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        # ========== 下台阶 - 35% (窄台阶 20cm) ==========
+        "stairs_down_20": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.12,
+            step_height_range=(0.0, 0.25),
+            step_width=0.20,  # 20cm 窄台阶
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        "stairs_down_24": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.12,
+            step_height_range=(0.0, 0.25),
+            step_width=0.24,
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        "stairs_down_28": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.11,
+            step_height_range=(0.0, 0.23),
+            step_width=0.28,
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        # ========== 其他高难度地形 - 30% ==========
+        "boxes": terrain_gen.MeshRandomGridTerrainCfg(
+            proportion=0.1, grid_width=0.30, grid_height_range=(0.0, 0.18), platform_width=2.0
+        ),
+        "rough": terrain_gen.HfRandomUniformTerrainCfg(
+            proportion=0.1, noise_range=(-0.03, 0.06), noise_step=0.02, border_width=0.25
+        ),
+        "slope": terrain_gen.HfPyramidSlopedTerrainCfg(
+            proportion=0.1, slope_range=(0.0, 0.35), platform_width=2.0, inverted=False
+        ),
+    },
+)
+

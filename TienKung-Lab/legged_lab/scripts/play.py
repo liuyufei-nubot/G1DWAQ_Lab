@@ -46,6 +46,8 @@ parser.add_argument("--terrain_color", type=str, default="mdl_shingles",
                     choices=["concrete", "grass", "sand", "dirt", "rock", "white", "dark",
                              "mdl_marble", "mdl_shingles", "mdl_aluminum"],
                     help="Terrain color: concrete/grass/sand/dirt/rock/white/dark (简单颜色), mdl_* (真实MDL材质)")
+parser.add_argument("--no_gait", action="store_true",
+                    help="Disable gait phase mechanism (for testing models trained without gait)")
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -88,6 +90,15 @@ def play():
     env_cfg.commands.ranges.lin_vel_y = (0.0, 0.0)
     env_cfg.commands.debug_vis = False  # Disable velocity command arrows
     env_cfg.scene.height_scanner.drift_range = (0.0, 0.0)
+
+    # Disable gait phase if --no_gait is specified
+    if args_cli.no_gait and hasattr(env_cfg, 'robot') and hasattr(env_cfg.robot, 'gait_phase'):
+        env_cfg.robot.gait_phase.enable = False
+        print("[INFO] 步态相位已禁用 (--no_gait)")
+        print("[INFO] 注意: 这会改变观测维数。只能加载对应的模型。")
+    elif hasattr(env_cfg, 'robot') and hasattr(env_cfg.robot, 'gait_phase') and env_cfg.robot.gait_phase.enable:
+        print("[INFO] 步态相位已启用")
+        print("[INFO] 观测包含步态相位信息 (sin + cos): +4 dims")
 
     # ========== 地形选择 ==========
     if args_cli.terrain == "stairs":
@@ -289,9 +300,13 @@ def play():
         # DWAQ policy needs obs_history from environment
         runner.eval_mode()
         
-        def policy_fn(obs):
-            # Get obs_history from environment (DWAQ env stores it internally)
-            _, obs_hist = env.get_observations()
+        def policy_fn(obs, extras=None):
+            # Get obs_history from extras (set by env.step())
+            # If extras not available, get from env's buffer directly
+            if extras is not None and "observations" in extras:
+                obs_hist = extras["observations"]["obs_hist"]
+            else:
+                obs_hist = env.dwaq_obs_history_buffer.buffer.reshape(env.num_envs, -1)
             obs_hist = obs_hist.to(env.device)
             return runner.alg.policy.act_inference(obs, obs_hist)
         
@@ -347,6 +362,7 @@ def play():
         keyboard = Keyboard(env)  # noqa:F841
 
     obs, _ = env.get_observations()
+    extras = env.extras  # Get initial extras
     
     # Reset trajectory history with initial observation if using depth policy
     if use_depth_policy:
@@ -356,15 +372,14 @@ def play():
     while simulation_app.is_running():
 
         with torch.inference_mode():
-            actions = policy(obs)
-            
-            # Handle different env.step() return formats
+            # DWAQ policy needs extras for obs_hist
             if use_dwaq_policy:
-                # DWAQ: obs, privileged_obs, prev_privileged_obs, obs_hist, rewards, dones, extras
-                obs, _, _, _, _, dones, _ = env.step(actions)
+                actions = policy(obs, extras)
             else:
-                # Standard: obs, _, dones, _
-                obs, _, dones, _ = env.step(actions)
+                actions = policy(obs)
+            
+            # All envs now return (obs, rewards, dones, extras) - Isaac Lab convention
+            obs, _, dones, extras = env.step(actions)
             
             # Reset history for terminated environments
             if use_depth_policy:

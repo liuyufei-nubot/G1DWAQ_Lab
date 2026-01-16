@@ -40,7 +40,7 @@ from legged_lab.envs.base.base_env_config import (
     RewardCfg,
 )
 import legged_lab.mdp as mdp
-from legged_lab.terrains import ROUGH_TERRAINS_CFG  # 使用与g1_rgb相同的地形
+from legged_lab.terrains import ROUGH_TERRAINS_CFG, DWAQ_HARD_TERRAINS_CFG
 
 
 @configclass
@@ -54,7 +54,7 @@ class G1DwaqRewardCfg(RewardCfg):
     # 问题: 原来权重1.0导致机器人学会"站立不动"的偷懒策略
     # 解决: 增加速度追踪权重，让"移动"比"站着"更有价值
     track_lin_vel_xy_exp = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.0, params={"std": 0.5})
-    track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=1.5, params={"std": 0.5})
+    track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=2.0, params={"std": 0.5})
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     energy = RewTerm(func=mdp.energy, weight=-1e-3)
@@ -138,10 +138,9 @@ class G1DwaqRewardCfg(RewardCfg):
     )
     
     # ==================== DWAQ Core Rewards (from DreamWaQ) ====================
-    # Survival bonus - 降低存活奖励，避免"偷懒站立"策略
-    # 问题: 原来weight=2.0让"站着不动"获得太多奖励
-    # 解决: 降低到0.5，迫使机器人必须完成速度追踪任务
-    alive = RewTerm(func=mdp.alive, weight=0.5)
+    # Survival bonus - 使用与 HumanoidDreamWaq 一致的权重
+    # HumanoidDreamWaq 使用 alive = 0.15，较小的值避免偷懒站立
+    alive = RewTerm(func=mdp.alive, weight=0.15)
     
     # ==================== 偷懒惩罚 (DWAQ 专用) ====================
     # 核心问题: 机器人学会"收到移动命令但站着不动"的偷懒策略
@@ -157,11 +156,15 @@ class G1DwaqRewardCfg(RewardCfg):
     )
     
     # Gait phase matching for bipedal walking - 学习正确的两足步态
-    # gait_phase_contact = RewTerm(
-    #     func=mdp.gait_phase_contact,
-    #     weight=0.18,
-    #     params={"sensor_cfg": SceneEntityCfg("contact_sensor", body_names=".*ankle_roll.*"), "stance_threshold": 0.55},
-    # )
+    # 奖励机器人在正确的相位进行触地/摆动
+    # - stance phase (phase < 0.55): 脚应该接触地面
+    # - swing phase (phase >= 0.55): 脚应该在空中
+    # 注意: body_names 顺序必须是 [左脚, 右脚]，与 leg_phase 顺序一致
+    gait_phase_contact = RewTerm(
+        func=mdp.gait_phase_contact,
+        weight=0.2,
+        params={"sensor_cfg": SceneEntityCfg("contact_sensor", body_names=["left_ankle_roll.*", "right_ankle_roll.*"]), "stance_threshold": 0.55},
+    )
     
     # Swing foot height control - 控制抬腿高度
     feet_swing_height = RewTerm(
@@ -219,10 +222,14 @@ class G1DwaqEnvCfg(BaseEnvCfg):
         self.scene.height_scanner.prim_body_name = "torso_link"
         self.scene.robot = G1_CFG
         self.scene.terrain_type = "generator"
-        # 使用与 g1_rgb 相同的地形配置，排除地形差异的影响
+        # 高难度地形: 20cm 窄台阶 (Resume 训练用)
+        # 如需切换回普通难度，改为 ROUGH_TERRAINS_CFG
+        # self.scene.terrain_generator = ROUGH_TERRAINS_CFG
         self.scene.terrain_generator = ROUGH_TERRAINS_CFG
         self.robot.terminate_contacts_body_names = [".*torso.*"]
-        self.robot.feet_body_names = [".*ankle_roll.*"]
+        # 明确指定脚的顺序: [左脚, 右脚]，与 leg_phase 顺序一致
+        # 这对于 gait_phase_contact 奖励函数正确匹配相位至关重要
+        self.robot.feet_body_names = ["left_ankle_roll.*", "right_ankle_roll.*"]
         self.domain_rand.events.add_base_mass.params["asset_cfg"].body_names = [".*torso.*"]
         
         # Height scanner - asymmetric AC (actor is blind, critic has terrain info)
@@ -243,22 +250,23 @@ class G1DwaqEnvCfg(BaseEnvCfg):
         self.robot.actor_obs_history_length = 1
         self.robot.critic_obs_history_length = 1
         
-        # Enable gait phase for periodic walking pattern
-        self.robot.gait_phase.enable = False
+        # Gait phase configuration
+        # 注意: 2026-01-15_11-21-04 模型是无步态版本 (96维观测)
+        # Resume 该模型时必须保持 enable=False，否则维度不匹配
+        self.robot.gait_phase.enable = True  # 禁用步态相位 (与原模型匹配)
         self.robot.gait_phase.period = 0.8   # 0.8s gait cycle
         self.robot.gait_phase.offset = 0.5   # 50% offset = alternating gait
         
-        # Action delay for sim-to-real transfer
-        self.domain_rand.action_delay.enable = False  # 暂时禁用，待训练成功后再开启
+        # ========== 域随机化配置 (方案A) ==========
+        # 1. 动作延迟: 模拟通信/计算延迟 (0-3步 = 0-60ms @ 50Hz)
+        self.domain_rand.action_delay.enable = True
+        self.domain_rand.action_delay.params = {"max_delay": 3, "min_delay": 0}
         
-        # ========== 域随机化配置 ==========
-        # 暂时禁用额外的域随机化，先确保DWAQ在与g1_rgb相同的条件下能训练成功
-        # 待训练成功后再逐步开启
+        # 2. 更宽的摩擦力范围: 模拟不同地面材质 (瓷砖/木地板/地毯等)
+        self.domain_rand.events.physics_material.params["static_friction_range"] = (0.2, 1.25)
+        self.domain_rand.events.physics_material.params["dynamic_friction_range"] = (0.15, 1.0)
         
-        # 摩擦力范围 - 使用与g1_rgb相同的默认值
-        # self.domain_rand.events.physics_material.params["static_friction_range"] = (0.2, 1.25)
-        # self.domain_rand.events.physics_material.params["dynamic_friction_range"] = (0.15, 1.0)
-        
+        # ========== 方案B/C 域随机化 (待后续开启) ==========
         # 质心偏移随机化 - 暂时禁用
         # self.domain_rand.events.randomize_com = EventTerm(...)
         
