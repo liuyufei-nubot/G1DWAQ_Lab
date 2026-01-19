@@ -765,7 +765,7 @@ def main():
     #     # 回退到硬编码路径
     #     default_checkpoint = os.path.join(LOGS_DIR, "g1_dwaq/2026-01-15_11-21-04/model_10000.pt")
 
-    default_checkpoint = os.path.join(LOGS_DIR, "g1_dwaq/2026-01-16_00-46-00/model_9000.pt")
+    default_checkpoint = os.path.join(LOGS_DIR, "g1_dwaq/2026-01-17_22-22-36/model_9999.pt")
 
     default_model = os.path.join(MJCF_DIR, "g1_29dof_rev_1_0_daf.xml")
     
@@ -825,14 +825,13 @@ def main():
             sys.exit(1)
     
     print("=" * 60)
-    print("G1 DWAQ Sim2Sim (无步态版本)")
+    print("G1 DWAQ Sim2Sim")
     print("=" * 60)
     print(f"Checkpoint: {args.checkpoint}")
     print(f"MuJoCo 模型/场景: {model_path}")
     if args.scene:
         print(f"场景: {args.scene}")
     print(f"模式: 盲走 (blind walking with VAE)")
-    print(f"观测: 96 维 (无步态相位)")
     print(f"历史: 5 帧")
     print("=" * 60)
     

@@ -23,5 +23,6 @@ from .replay_buffer_multi import ReplayBufferMulti
 from .rollout_storage import RolloutStorage
 from .rollout_storage_extra import RolloutStorageEX
 from .rollout_storage_dwaq import RolloutStorageDWAQ
+from .rollout_storage_vision import RolloutStorageVision
 
-__all__ = ["RolloutStorage", "RolloutStorageEX", "RolloutStorageDWAQ", "ReplayBuffer", "ReplayBufferMulti"]
+__all__ = ["RolloutStorage", "RolloutStorageEX", "RolloutStorageDWAQ", "RolloutStorageVision", "ReplayBuffer", "ReplayBufferMulti"]

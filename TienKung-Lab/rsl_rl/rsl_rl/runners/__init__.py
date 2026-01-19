@@ -22,5 +22,6 @@ from .amp_on_policy_runner import AmpOnPolicyRunner
 from .amp_on_policy_runner_multi import AMPOnPolicyRunnerMulti
 from .on_policy_runner import OnPolicyRunner
 from .dwaq_on_policy_runner import DWAQOnPolicyRunner
+from .vision_on_policy_runner import VisionOnPolicyRunner
 
-__all__ = ["OnPolicyRunner", "AmpOnPolicyRunner", "AMPOnPolicyRunnerMulti", "DWAQOnPolicyRunner"]
+__all__ = ["OnPolicyRunner", "AmpOnPolicyRunner", "AMPOnPolicyRunnerMulti", "DWAQOnPolicyRunner", "VisionOnPolicyRunner"]

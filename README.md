@@ -23,6 +23,8 @@ python legged_lab/scripts/play.py --task=g1_rgb --load_run=<运行目录> --chec
 ### Sim2Sim
 ```bash
 python legged_lab/scripts/sim2sim_g1_rgb.py --policy <策略文件.pt> --model <MuJoCo模型.xml> --duration 100
+
+python legged_lab/scripts/sim2sim_g1_dwaq.py --scene stairs
 ```
 
 ---

@@ -32,6 +32,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.utils import configclass
+from isaaclab.envs.mdp import events as isaaclab_events
 
 from legged_lab.assets.unitree import G1_CFG
 from legged_lab.envs.base.base_env_config import (
@@ -257,21 +258,42 @@ class G1DwaqEnvCfg(BaseEnvCfg):
         self.robot.gait_phase.period = 0.8   # 0.8s gait cycle
         self.robot.gait_phase.offset = 0.5   # 50% offset = alternating gait
         
-        # ========== 域随机化配置 (方案A) ==========
+        # ========== 域随机化配置 (方案B: 标准) ==========
+        
         # 1. 动作延迟: 模拟通信/计算延迟 (0-3步 = 0-60ms @ 50Hz)
-        self.domain_rand.action_delay.enable = True
-        self.domain_rand.action_delay.params = {"max_delay": 3, "min_delay": 0}
+        # self.domain_rand.action_delay.enable = True
+        # self.domain_rand.action_delay.params = {"max_delay": 3, "min_delay": 0}
         
-        # 2. 更宽的摩擦力范围: 模拟不同地面材质 (瓷砖/木地板/地毯等)
-        self.domain_rand.events.physics_material.params["static_friction_range"] = (0.2, 1.25)
-        self.domain_rand.events.physics_material.params["dynamic_friction_range"] = (0.15, 1.0)
+        # # 2. 更宽的摩擦力范围: 模拟不同地面材质 (瓷砖/木地板/地毯等)
+        # self.domain_rand.events.physics_material.params["static_friction_range"] = (0.2, 1.25)
+        # self.domain_rand.events.physics_material.params["dynamic_friction_range"] = (0.15, 1.0)
         
-        # ========== 方案B/C 域随机化 (待后续开启) ==========
-        # 质心偏移随机化 - 暂时禁用
-        # self.domain_rand.events.randomize_com = EventTerm(...)
+        # # 3. 质心偏移随机化: 模拟负载偏移 (±3cm)
+        # self.domain_rand.events.randomize_com = EventTerm(
+        #     func=isaaclab_events.randomize_rigid_body_com,
+        #     mode="startup",
+        #     params={
+        #         "asset_cfg": SceneEntityCfg("robot", body_names=".*torso.*"),
+        #         "com_range": {"x": (-0.03, 0.03), "y": (-0.03, 0.03), "z": (-0.03, 0.03)},
+        #     },
+        # )
         
-        # 执行器增益随机化 - 暂时禁用
-        # self.domain_rand.events.randomize_actuator_gains = EventTerm(...)
+        # 4. 执行器增益随机化: 模拟电机差异 (±20%)
+        self.domain_rand.events.randomize_actuator_gains = EventTerm(
+            func=isaaclab_events.randomize_actuator_gains,
+            mode="startup",
+            params={
+                "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+                "stiffness_distribution_params": (0.8, 1.2),  # ±20% Kp
+                "damping_distribution_params": (0.8, 1.2),    # ±20% Kd
+                "operation": "scale",
+                "distribution": "uniform",
+            },
+        )
+        
+        # ========== 方案C 域随机化 (待后续开启) ==========
+        # 关节阻尼/摩擦随机化 - 暂时禁用
+        # 外力扰动 - 暂时禁用
 
 
 @configclass  

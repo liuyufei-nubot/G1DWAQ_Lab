@@ -22,6 +22,7 @@ from .actor_critic import ActorCritic
 from .actor_critic_recurrent import ActorCriticRecurrent
 from .actor_critic_depth import ActorCriticDepth
 from .actor_critic_DWAQ import ActorCritic_DWAQ
+from .actor_critic_vision import ActorCriticVision, VisionFeatureBuffer
 from .discriminator import Discriminator
 from .normalizer import EmpiricalNormalization
 from .rnd import RandomNetworkDistillation
