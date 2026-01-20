@@ -178,14 +178,14 @@ class G1DwaqRewardCfg(RewardCfg):
     #     },
     # )
 
+    # Swing foot height control - 控制抬腿高度
     feet_swing_height = RewTerm(
-        func=mdp.feet_swing_height_adaptive,
+        func=mdp.feet_swing_height,
         weight=-0.2,
         params={
             "sensor_cfg": SceneEntityCfg("contact_sensor", body_names=".*ankle_roll.*"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_roll.*"),
-            "base_height": 0.08,  # 基础抬腿高度 8cm
-            "margin": 0.02,       # 障碍余量 2cm
+            "target_height": 0.08,
         },
     )
     
