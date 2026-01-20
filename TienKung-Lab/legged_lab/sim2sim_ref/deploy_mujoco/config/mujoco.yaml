@@ -1,3 +1,0 @@
-xml_path: "g1_description/scene.xml"
-simulation_dt: 0.003
-control_decimation: 7

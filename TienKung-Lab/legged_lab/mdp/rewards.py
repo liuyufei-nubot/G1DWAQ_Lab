@@ -361,64 +361,6 @@ def gait_phase_contact(
     return torch.sum(phase_match.float(), dim=-1)  # Sum over feet
 
 
-def feet_swing_height_new(
-    env: BaseEnv, 
-    sensor_cfg: SceneEntityCfg,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    target_height: float = 0.08
-) -> torch.Tensor:
-    """Penalize swing foot height deviation from target (relative to terrain).
-    
-    During swing phase (when foot is not in contact), penalize if the foot
-    is not lifted high enough above the terrain. Only penalizes insufficient
-    clearance, not excessive height.
-    
-    Args:
-        env: Environment.
-        sensor_cfg: Contact sensor configuration for feet.
-        asset_cfg: Robot configuration with body_ids for feet.
-        target_height: Target lift height above terrain (default 0.08m).
-        
-    Reference: 
-        - DreamWaQ _reward_feet_swing_height()
-        - GaussGym _reward_feet_phase() with terrain-aware height
-        
-    Note:
-        This version considers terrain height to properly handle stairs/obstacles.
-        Uses .clamp(max=0) to only penalize insufficient clearance.
-    """
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    asset: Articulation = env.scene[asset_cfg.name]
-    
-    # Get contact status
-    net_contact_forces = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
-    contact = torch.norm(net_contact_forces, dim=-1) > 1.0  # (num_envs, num_feet)
-    
-    # Get feet positions (z-coordinate in world frame)
-    feet_pos_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]  # (num_envs, num_feet)
-    
-    # Get terrain height at robot base position
-    # Note: env.scene.terrain provides terrain height relative to env origin
-    # We use the robot's base height as a proxy for terrain level when height_scan is not available
-    if hasattr(env, 'terrain_heights') and env.terrain_heights is not None:
-        # If terrain heights are available (from height scanner)
-        terrain_z = env.terrain_heights  # (num_envs,)
-    else:
-        # Fallback: use root height minus expected standing height as terrain estimate
-        # For G1, standing height is ~0.78m, so terrain ≈ root_z - 0.78
-        root_z = asset.data.root_pos_w[:, 2]  # (num_envs,)
-        terrain_z = (root_z - 0.78).clamp(min=0.0)  # Assume terrain is at least 0
-    
-    # Calculate relative foot height above terrain
-    feet_relative_z = feet_pos_z - terrain_z.unsqueeze(-1)  # (num_envs, num_feet)
-    
-    # Only penalize insufficient clearance (negative error means too low)
-    # .clamp(max=0) ensures we don't penalize lifting too high
-    height_error = (feet_relative_z - target_height).clamp(max=0.0)
-    pos_error = torch.square(height_error) * (~contact).float()
-    
-    return torch.sum(pos_error, dim=-1)
-
 
 def feet_swing_height(
     env: BaseEnv, 
