@@ -1,0 +1,336 @@
+--- git status ---
+On branch rgb_cnn
+Your branch is up to date with 'origin/rgb_cnn'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+  (commit or discard the untracked or modified content in submodules)
+	modified:   LeggedLabDeploy (modified content, untracked content)
+	modified:   Reference/HumanoidDreamWaq (modified content)
+	modified:   TienKung-Lab/legged_lab/envs/g1/g1_dwaq_config.py
+	modified:   TienKung-Lab/legged_lab/envs/g1/g1_dwaq_env.py
+	modified:   TienKung-Lab/legged_lab/mdp/rewards.py
+	modified:   TienKung-Lab/legged_lab/modules/Depth-Anything-V2 (untracked content)
+	modified:   TienKung-Lab/legged_lab/scripts/play.py
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	TienKung-Lab/docs/COMPATIBILITY_CHECK.md
+	TienKung-Lab/docs/DWAQ_LATENT_CODE.md
+	TienKung-Lab/docs/GAIT_IMPLEMENTATION.md
+	TienKung-Lab/legged_lab/scripts/export_dwaq_policy.py
+	TienKung-Lab/legged_lab/scripts/sim2sim_g1_dwaq.py
+	TienKung-Lab/rsl_rl_dwaq.zip
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
+diff --git a/LeggedLabDeploy b/LeggedLabDeploy
+--- a/LeggedLabDeploy
++++ b/LeggedLabDeploy
+@@ -1 +1 @@
+-Subproject commit 93736b4466b9de2a75cb9b0099cbce6cbacdd86a
++Subproject commit 93736b4466b9de2a75cb9b0099cbce6cbacdd86a-dirty
+diff --git a/Reference/HumanoidDreamWaq b/Reference/HumanoidDreamWaq
+--- a/Reference/HumanoidDreamWaq
++++ b/Reference/HumanoidDreamWaq
+@@ -1 +1 @@
+-Subproject commit 529af74ea658b920e8aae5f163d1b31e28cb0ae8
++Subproject commit 529af74ea658b920e8aae5f163d1b31e28cb0ae8-dirty
+diff --git a/TienKung-Lab/legged_lab/envs/g1/g1_dwaq_config.py b/TienKung-Lab/legged_lab/envs/g1/g1_dwaq_config.py
+index 3725f89..d11fbc5 100644
+--- a/TienKung-Lab/legged_lab/envs/g1/g1_dwaq_config.py
++++ b/TienKung-Lab/legged_lab/envs/g1/g1_dwaq_config.py
+@@ -54,7 +54,7 @@ class G1DwaqRewardCfg(RewardCfg):
+     # 问题: 原来权重1.0导致机器人学会"站立不动"的偷懒策略
+     # 解决: 增加速度追踪权重，让"移动"比"站着"更有价值
+     track_lin_vel_xy_exp = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=2.0, params={"std": 0.5})
+-    track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=1.5, params={"std": 0.5})
++    track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=2.0, params={"std": 0.5})
+     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
+     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+     energy = RewTerm(func=mdp.energy, weight=-1e-3)
+@@ -138,10 +138,9 @@ class G1DwaqRewardCfg(RewardCfg):
+     )
+     
+     # ==================== DWAQ Core Rewards (from DreamWaQ) ====================
+-    # Survival bonus - 降低存活奖励，避免"偷懒站立"策略
+-    # 问题: 原来weight=2.0让"站着不动"获得太多奖励
+-    # 解决: 降低到0.5，迫使机器人必须完成速度追踪任务
+-    alive = RewTerm(func=mdp.alive, weight=0.5)
++    # Survival bonus - 使用与 HumanoidDreamWaq 一致的权重
++    # HumanoidDreamWaq 使用 alive = 0.15，较小的值避免偷懒站立
++    alive = RewTerm(func=mdp.alive, weight=0.15)
+     
+     # ==================== 偷懒惩罚 (DWAQ 专用) ====================
+     # 核心问题: 机器人学会"收到移动命令但站着不动"的偷懒策略
+@@ -157,11 +156,15 @@ class G1DwaqRewardCfg(RewardCfg):
+     )
+     
+     # Gait phase matching for bipedal walking - 学习正确的两足步态
+-    # gait_phase_contact = RewTerm(
+-    #     func=mdp.gait_phase_contact,
+-    #     weight=0.18,
+-    #     params={"sensor_cfg": SceneEntityCfg("contact_sensor", body_names=".*ankle_roll.*"), "stance_threshold": 0.55},
+-    # )
++    # 奖励机器人在正确的相位进行触地/摆动
++    # - stance phase (phase < 0.55): 脚应该接触地面
++    # - swing phase (phase >= 0.55): 脚应该在空中
++    # 注意: body_names 顺序必须是 [左脚, 右脚]，与 leg_phase 顺序一致
++    gait_phase_contact = RewTerm(
++        func=mdp.gait_phase_contact,
++        weight=0.2,
++        params={"sensor_cfg": SceneEntityCfg("contact_sensor", body_names=["left_ankle_roll.*", "right_ankle_roll.*"]), "stance_threshold": 0.55},
++    )
+     
+     # Swing foot height control - 控制抬腿高度
+     feet_swing_height = RewTerm(
+@@ -222,7 +225,9 @@ class G1DwaqEnvCfg(BaseEnvCfg):
+         # 使用与 g1_rgb 相同的地形配置，排除地形差异的影响
+         self.scene.terrain_generator = ROUGH_TERRAINS_CFG
+         self.robot.terminate_contacts_body_names = [".*torso.*"]
+-        self.robot.feet_body_names = [".*ankle_roll.*"]
++        # 明确指定脚的顺序: [左脚, 右脚]，与 leg_phase 顺序一致
++        # 这对于 gait_phase_contact 奖励函数正确匹配相位至关重要
++        self.robot.feet_body_names = ["left_ankle_roll.*", "right_ankle_roll.*"]
+         self.domain_rand.events.add_base_mass.params["asset_cfg"].body_names = [".*torso.*"]
+         
+         # Height scanner - asymmetric AC (actor is blind, critic has terrain info)
+@@ -244,7 +249,7 @@ class G1DwaqEnvCfg(BaseEnvCfg):
+         self.robot.critic_obs_history_length = 1
+         
+         # Enable gait phase for periodic walking pattern
+-        self.robot.gait_phase.enable = False
++        self.robot.gait_phase.enable = True  # 启用步态相位
+         self.robot.gait_phase.period = 0.8   # 0.8s gait cycle
+         self.robot.gait_phase.offset = 0.5   # 50% offset = alternating gait
+         
+diff --git a/TienKung-Lab/legged_lab/envs/g1/g1_dwaq_env.py b/TienKung-Lab/legged_lab/envs/g1/g1_dwaq_env.py
+index 74953f9..a44a6a8 100644
+--- a/TienKung-Lab/legged_lab/envs/g1/g1_dwaq_env.py
++++ b/TienKung-Lab/legged_lab/envs/g1/g1_dwaq_env.py
+@@ -212,6 +212,14 @@ class G1DwaqEnv(VecEnv):
+         self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+         self.sim_step_counter = 0
+         self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
++        
++        # Initialize gait phase buffers for bipedal walking
++        # phase: normalized gait phase [0, 1)
++        # phase_left/phase_right: phase for each leg (offset by gait_phase.offset)
++        self.phase = torch.zeros(self.num_envs, device=self.device)
++        self.phase_left = torch.zeros(self.num_envs, device=self.device)
++        self.phase_right = torch.zeros(self.num_envs, device=self.device)
++        self.leg_phase = torch.zeros(self.num_envs, 2, device=self.device)
+ 
+         self.init_obs_buffer()
+ 
+@@ -227,17 +235,24 @@ class G1DwaqEnv(VecEnv):
+         joint_vel = robot.data.joint_vel - robot.data.default_joint_vel
+         action = self.action_buffer._circular_buffer.buffer[:, -1, :]
+ 
+-        current_actor_obs = torch.cat(
+-            [
+-                ang_vel * self.obs_scales.ang_vel,
+-                projected_gravity * self.obs_scales.projected_gravity,
+-                command * self.obs_scales.commands,
+-                joint_pos * self.obs_scales.joint_pos,
+-                joint_vel * self.obs_scales.joint_vel,
+-                action * self.obs_scales.actions,
+-            ],
+-            dim=-1,
+-        )
++        # Build actor observation with optional gait phase information
++        obs_components = [
++            ang_vel * self.obs_scales.ang_vel,
++            projected_gravity * self.obs_scales.projected_gravity,
++            command * self.obs_scales.commands,
++            joint_pos * self.obs_scales.joint_pos,
++            joint_vel * self.obs_scales.joint_vel,
++            action * self.obs_scales.actions,
++        ]
++        
++        # Add gait phase information if enabled (参照 TienKung 的做法)
++        # 输入：leg_phase [num_envs, 2] - 左右腿的相位值 [0, 1)
++        # 输出：sin 和 cos 的融合表示，便于网络学习周期性信息
++        if self.cfg.robot.gait_phase.enable:
++            obs_components.append(torch.sin(2 * torch.pi * self.leg_phase))  # sin(phase) for left and right legs
++            obs_components.append(torch.cos(2 * torch.pi * self.leg_phase))  # cos(phase) for left and right legs
++        
++        current_actor_obs = torch.cat(obs_components, dim=-1)
+ 
+         root_lin_vel = robot.data.root_lin_vel_b
+         feet_contact = torch.max(torch.norm(net_contact_forces[:, :, self.feet_cfg.body_ids], dim=-1), dim=1)[0] > 0.5
+@@ -379,6 +394,14 @@ class G1DwaqEnv(VecEnv):
+         self.action_buffer.reset(env_ids)
+         self.episode_length_buf[env_ids] = 0
+         
++        # Reset gait phase for reset environments (only if gait is enabled)
++        if self.cfg.robot.gait_phase.enable:
++            self.phase[env_ids] = 0.0
++            self.phase_left[env_ids] = 0.0
++            self.phase_right[env_ids] = self.cfg.robot.gait_phase.offset
++            self.leg_phase[env_ids, 0] = 0.0
++            self.leg_phase[env_ids, 1] = self.cfg.robot.gait_phase.offset
++        
+         # DWAQ: Reset previous critic obs for reset environments
+         # Fill with zeros to avoid using stale data
+         self.prev_critic_obs[env_ids] = 0.0
+@@ -430,6 +453,9 @@ class G1DwaqEnv(VecEnv):
+             self.sim.render()
+ 
+         self.episode_length_buf += 1
++        
++        # Update gait phase for bipedal walking rewards
++        self._update_gait_phase()
+ 
+         self.command_generator.compute(self.step_dt)
+         if "interval" in self.event_manager.available_modes:
+@@ -456,6 +482,37 @@ class G1DwaqEnv(VecEnv):
+         # Isaac Lab style: return 4 values
+         return actor_obs, reward_buf, self.reset_buf, self.extras
+ 
++    def _update_gait_phase(self):
++        """Update gait phase for bipedal walking.
++        
++        Computes the normalized gait phase [0, 1) based on episode time.
++        Left and right legs have a phase offset (default 0.5 = alternating gait).
++        
++        The gait phase is used by gait_phase_contact reward to encourage
++        proper stance/swing timing for each leg.
++        
++        Reference: DreamWaQ _post_physics_step_callback()
++        """
++        gait_cfg = self.cfg.robot.gait_phase
++        if not gait_cfg.enable:
++            return
++            
++        period = gait_cfg.period  # Gait cycle period in seconds (e.g., 0.8s)
++        offset = gait_cfg.offset  # Phase offset between legs (e.g., 0.5 = 50%)
++        
++        # Compute normalized phase from episode time
++        # t = episode_length * step_dt, phase = (t % period) / period
++        t = self.episode_length_buf.float() * self.step_dt
++        self.phase = (t % period) / period
++        
++        # Left leg uses base phase, right leg is offset
++        self.phase_left = self.phase
++        self.phase_right = (self.phase + offset) % 1.0
++        
++        # Stack for convenience (used by some reward functions)
++        self.leg_phase[:, 0] = self.phase_left
++        self.leg_phase[:, 1] = self.phase_right
++
+     def check_reset(self):
+         """Check termination conditions for all environments."""
+         net_contact_forces = self.contact_sensor.data.net_forces_w_history
+diff --git a/TienKung-Lab/legged_lab/mdp/rewards.py b/TienKung-Lab/legged_lab/mdp/rewards.py
+index a2c1700..d20a41d 100644
+--- a/TienKung-Lab/legged_lab/mdp/rewards.py
++++ b/TienKung-Lab/legged_lab/mdp/rewards.py
+@@ -335,18 +335,21 @@ def gait_phase_contact(
+         stance_threshold: Phase threshold below which the foot should be in stance.
+         
+     Reference: DreamWaQ _reward_contact()
++    
++    Note: This function uses env.leg_phase which should be [num_envs, num_feet] tensor
++    where leg_phase[:, 0] = phase_left and leg_phase[:, 1] = phase_right.
++    The sensor_cfg.body_ids should match the same ordering (left foot first, right foot second).
+     """
+     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+     net_contact_forces = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
+     
+-    # Check contact for each foot
+-    contact = torch.norm(net_contact_forces, dim=-1) > 1.0  # (num_envs, num_feet)
++    # Check contact for each foot (use z-component like original DreamWaQ)
++    # Original: contact = self.contact_forces[:, self.feet_indices[i], 2] > 1
++    contact = net_contact_forces[:, :, 2] > 1.0  # (num_envs, num_feet), z-direction force
+     
+-    # Get gait phase for each foot
+-    # For biped: phase_left and phase_right
+-    phase_left = env.phase_left if hasattr(env, 'phase_left') else env.phase
+-    phase_right = env.phase_right if hasattr(env, 'phase_right') else env.phase
+-    leg_phase = torch.stack([phase_left, phase_right], dim=-1)  # (num_envs, 2)
++    # Use leg_phase directly from environment
++    # leg_phase shape: (num_envs, 2) where [:, 0] = left, [:, 1] = right
++    leg_phase = env.leg_phase
+     
+     # Expected stance: phase < stance_threshold
+     is_stance = leg_phase < stance_threshold
+diff --git a/TienKung-Lab/legged_lab/scripts/play.py b/TienKung-Lab/legged_lab/scripts/play.py
+index b28dff7..9478361 100644
+--- a/TienKung-Lab/legged_lab/scripts/play.py
++++ b/TienKung-Lab/legged_lab/scripts/play.py
+@@ -46,6 +46,8 @@ parser.add_argument("--terrain_color", type=str, default="mdl_shingles",
+                     choices=["concrete", "grass", "sand", "dirt", "rock", "white", "dark",
+                              "mdl_marble", "mdl_shingles", "mdl_aluminum"],
+                     help="Terrain color: concrete/grass/sand/dirt/rock/white/dark (简单颜色), mdl_* (真实MDL材质)")
++parser.add_argument("--no_gait", action="store_true",
++                    help="Disable gait phase mechanism (for testing models trained without gait)")
+ 
+ # append RSL-RL cli arguments
+ cli_args.add_rsl_rl_args(parser)
+@@ -89,6 +91,15 @@ def play():
+     env_cfg.commands.debug_vis = False  # Disable velocity command arrows
+     env_cfg.scene.height_scanner.drift_range = (0.0, 0.0)
+ 
++    # Disable gait phase if --no_gait is specified
++    if args_cli.no_gait and hasattr(env_cfg, 'robot') and hasattr(env_cfg.robot, 'gait_phase'):
++        env_cfg.robot.gait_phase.enable = False
++        print("[INFO] 步态相位已禁用 (--no_gait)")
++        print("[INFO] 注意: 这会改变观测维数。只能加载对应的模型。")
++    elif hasattr(env_cfg, 'robot') and hasattr(env_cfg.robot, 'gait_phase') and env_cfg.robot.gait_phase.enable:
++        print("[INFO] 步态相位已启用")
++        print("[INFO] 观测包含步态相位信息 (sin + cos): +4 dims")
++
+     # ========== 地形选择 ==========
+     if args_cli.terrain == "stairs":
+         # 纯台阶地形 (最难)
+@@ -289,9 +300,13 @@ def play():
+         # DWAQ policy needs obs_history from environment
+         runner.eval_mode()
+         
+-        def policy_fn(obs):
+-            # Get obs_history from environment (DWAQ env stores it internally)
+-            _, obs_hist = env.get_observations()
++        def policy_fn(obs, extras=None):
++            # Get obs_history from extras (set by env.step())
++            # If extras not available, get from env's buffer directly
++            if extras is not None and "observations" in extras:
++                obs_hist = extras["observations"]["obs_hist"]
++            else:
++                obs_hist = env.dwaq_obs_history_buffer.buffer.reshape(env.num_envs, -1)
+             obs_hist = obs_hist.to(env.device)
+             return runner.alg.policy.act_inference(obs, obs_hist)
+         
+@@ -347,6 +362,7 @@ def play():
+         keyboard = Keyboard(env)  # noqa:F841
+ 
+     obs, _ = env.get_observations()
++    extras = env.extras  # Get initial extras
+     
+     # Reset trajectory history with initial observation if using depth policy
+     if use_depth_policy:
+@@ -356,15 +372,14 @@ def play():
+     while simulation_app.is_running():
+ 
+         with torch.inference_mode():
+-            actions = policy(obs)
+-            
+-            # Handle different env.step() return formats
++            # DWAQ policy needs extras for obs_hist
+             if use_dwaq_policy:
+-                # DWAQ: obs, privileged_obs, prev_privileged_obs, obs_hist, rewards, dones, extras
+-                obs, _, _, _, _, dones, _ = env.step(actions)
++                actions = policy(obs, extras)
+             else:
+-                # Standard: obs, _, dones, _
+-                obs, _, dones, _ = env.step(actions)
++                actions = policy(obs)
++            
++            # All envs now return (obs, rewards, dones, extras) - Isaac Lab convention
++            obs, _, dones, extras = env.step(actions)
+             
+             # Reset history for terminated environments
+             if use_depth_policy:
