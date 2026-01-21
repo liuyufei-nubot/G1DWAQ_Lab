@@ -97,7 +97,7 @@ python legged_lab/scripts/play.py --task=g1_dwaq --load_run=<运行目录> --che
 
 示例：
 ```bash
-python legged_lab/scripts/play.py --task=g1_dwaq --load_run=logs/g1_dwaq/2026-01-16_00-46-00 --checkpoint=model_9999.pt
+python legged_lab/scripts/play.py --task=g1_dwaq --load_run=2026-01-16_00-46-00 --checkpoint=model_9999.pt
 ```
 
 #### Sim2Sim 转移
