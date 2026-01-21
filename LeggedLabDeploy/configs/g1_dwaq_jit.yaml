@@ -1,0 +1,42 @@
+# G1 DWAQ 部署配置 (JIT 版本)
+# 使用导出的 TorchScript 策略，与标准 deploy.py 兼容
+
+control_dt: 0.02
+
+msg_type: "hg"        # "hg" for G1
+imu_type: "pelvis"    # "torso" or "pelvis"
+
+lowcmd_topic: "rt/lowcmd"
+lowstate_topic: "rt/lowstate"
+
+# 使用导出的 TorchScript 策略
+policy_path: "policy/g1_dwaq/policy.pt"
+
+# DWAQ 使用 5 帧观测历史
+# 注意: 导出的模型接收扁平化历史 (5 * 96 = 480)
+history_length: 5
+
+# G1 关节映射: Isaac Lab 顺序 -> 电机索引
+joint2motor_idx: [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 22, 4, 10, 16, 23, 5, 11, 17, 24, 18, 25, 19, 26, 20, 27, 21, 28]
+
+# PD 增益 (Isaac Lab 顺序)
+kps: [200, 200, 200, 150, 150, 200, 150, 150, 200, 200, 200, 100, 100, 20, 20, 100, 100, 20, 20, 50, 50, 50, 50, 40, 40, 40, 40, 40, 40]
+kds: [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+
+# 默认关节位置 (Isaac Lab 顺序)
+default_joint_pos: [-0.2, -0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.42, 0.42, 0.35, 0.35, -0.23, -0.23, 0.18, -0.18, 0.0, 0.0, 0.0, 0.0, 0.87, 0.87, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# 观测缩放
+ang_vel_scale: 1.0
+dof_pos_scale: 1.0
+dof_vel_scale: 1.0
+action_scale: 0.25
+command_scale: [1.0, 1.0, 1.0]
+
+# 观测维度 (无步态版本)
+# 输入: 5 * 96 = 480 维 (扁平化历史)
+num_actions: 29
+num_obs: 96
+
+# 速度命令范围
+command_range: {lin_vel_x: [-0.4, 0.7], lin_vel_y: [-0.4, 0.4], ang_vel_z: [-1.57, 1.57]}

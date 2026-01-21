@@ -1,0 +1,48 @@
+# G1 DWAQ 部署配置
+# 无步态版本 (观测 96 维)
+
+control_dt: 0.02
+
+msg_type: "hg"        # "hg" for G1
+imu_type: "pelvis"    # "torso" or "pelvis"
+
+lowcmd_topic: "rt/lowcmd"
+lowstate_topic: "rt/lowstate"
+
+# DWAQ 策略路径 (需要 checkpoint，非 JIT)
+policy_path: "policy/g1_dwaq/model_10000.pt"
+
+# DWAQ 使用 5 帧观测历史 (与训练一致)
+dwaq_obs_history_length: 5
+
+# 标准历史长度 (用于兼容性，DWAQ 实际用 dwaq_obs_history_length)
+history_length: 1
+
+# G1 关节映射: Isaac Lab 顺序 -> 电机索引
+# Isaac Lab 顺序: [left_hip_pitch, right_hip_pitch, waist_yaw, left_hip_roll, right_hip_roll, ...]
+joint2motor_idx: [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 22, 4, 10, 16, 23, 5, 11, 17, 24, 18, 25, 19, 26, 20, 27, 21, 28]
+
+# PD 增益 (Isaac Lab 顺序)
+kps: [200, 200, 200, 150, 150, 200, 150, 150, 200, 200, 200, 100, 100, 20, 20, 100, 100, 20, 20, 50, 50, 50, 50, 40, 40, 40, 40, 40, 40]
+kds: [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+
+# 默认关节位置 (Isaac Lab 顺序)
+default_joint_pos: [-0.2, -0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.42, 0.42, 0.35, 0.35, -0.23, -0.23, 0.18, -0.18, 0.0, 0.0, 0.0, 0.0, 0.87, 0.87, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# 观测缩放
+ang_vel_scale: 1.0
+dof_pos_scale: 1.0
+dof_vel_scale: 1.0
+action_scale: 0.25
+command_scale: [1.0, 1.0, 1.0]
+
+# DWAQ 观测维度 (无步态版本)
+# ang_vel(3) + gravity(3) + command(3) + joint_pos(29) + joint_vel(29) + action(29) = 96
+num_actions: 29
+num_obs: 96
+
+# DWAQ encoder 输出维度: velocity(3) + latent(16) = 19
+cenet_out_dim: 19
+
+# 速度命令范围
+command_range: {lin_vel_x: [-0.4, 0.7], lin_vel_y: [-0.4, 0.4], ang_vel_z: [-1.57, 1.57]}

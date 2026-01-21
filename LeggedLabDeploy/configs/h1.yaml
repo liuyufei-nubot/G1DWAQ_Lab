@@ -1,0 +1,30 @@
+control_dt: 0.02
+
+msg_type: "go"     # "hg" or "go"
+imu_type: "torso"    # "torso" or "pelvis"
+torso_idx: 6
+
+weak_motor: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+
+lowcmd_topic: "rt/lowcmd"
+lowstate_topic: "rt/lowstate"
+
+policy_path: "policy/h1/policy.pt"
+history_length: 10
+
+joint2motor_idx: [7,    8,    6,    3,    0,     16,   12,  4,    1,    17,   13,   5,    2,    18,   14,   10,   11,   19,   15]
+kps:             [200., 200., 300., 200., 200., 100., 100., 200., 200.,  50.,  50., 300., 300.,  50.,  50.,  40.,  40.,  50.,  50.]
+kds:                 [5., 5., 6., 5., 5., 2., 2., 5., 5., 2., 2., 6., 6., 2., 2., 2., 2., 2., 2.]
+default_joint_pos:      [0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.2000,  0.2000, -0.2800,
+         -0.2800,  0.0000,  0.0000,  0.7900,  0.7900,  0.0000,  0.0000, -0.5200,
+         -0.5200,  0.3200,  0.3200]
+
+ang_vel_scale: 1.0
+dof_pos_scale: 1.0
+dof_vel_scale: 1.0
+action_scale: 0.25
+command_scale: [1.0, 1.0, 1.0]
+num_actions: 19
+num_obs: 66
+
+command_range: {lin_vel_x: [-0.4, 0.7], lin_vel_y: [-0.45, 0.45], ang_vel_z: [-1.0, 1.0]}
