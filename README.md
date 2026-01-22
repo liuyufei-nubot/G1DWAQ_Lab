@@ -15,7 +15,7 @@
 - 🔄 **Sim2Sim 转移**：从 IsaacLab 仿真环境迁移到 MuJoCo 
 - 🤖 **实物部署**：在 Unitree G1 真实机器人上部署执行
 
-本项目在Isaaclab复现 **DreamWaQ** 算法，算法部分参考[Manaro-Alpha](https://github.com/Manaro-Alpha/DreamWaQ)，框架基于天工[TienKung-Lab](https://github.com/Open-X-Humanoid/TienKung-Lab)和[Legged Lab](https://github.com/Hellod035/LeggedLab)开源框架
+本项目在Isaaclab复现 **DreamWaQ** 算法，DreamWaQ算法部分参考[Manaro-Alpha](https://github.com/Manaro-Alpha/DreamWaQ)，框架基于天工[TienKung-Lab](https://github.com/Open-X-Humanoid/TienKung-Lab)和[Legged Lab](https://github.com/Hellod035/LeggedLab)开源框架，实物部署由[LeggedLabDeploy](https://github.com/Hellod035/LeggedLabDeploy)实现。
 
 ## 项目结构
 
@@ -159,7 +159,7 @@ python legged_lab/scripts/sim2sim_g1_dwaq.py --scene stairs
 
 | 版本 | 维度 | 特点 | 推荐场景 |
 |------|------|------|---------|
-| 无步态版本 (`g1_dwaq_jit.yaml`) | 96 | 轻量级，推理快 | 平地、粗糙地面 |
+| 无步态版本 (`g1_dwaq_jit.yaml`) | 96 | 原地转弯困难 | 台阶、复杂地形 |
 | 带步态版本 (`g1_dwaq_phase.yaml`) | 100 | 转向能力强 (+42%) | 台阶、复杂地形 |
 
 ## 功能特性
@@ -178,38 +178,11 @@ python legged_lab/scripts/sim2sim_g1_dwaq.py --scene stairs
 ### 📋 可扩展方向
 
 - [ ] 视觉输入集成
-- [ ] 多模态感觉融合
-- [ ] 多任务学习
-- [ ] 迁移学习模块
+- [ ] 显式地形估计
 
 ## 常见问题排查
 
-### 1. IsaacSim 加载问题
-
-如果遇到 IsaacSim 加载失败，请检查：
-```bash
-# 验证 Isaac Lab 安装
-python -c "from isaaclab.envs import Environment; print('Isaac Lab OK')"
-```
-
-### 2. CUDA/GPU 问题
-
-如果出现 CUDA 错误：
-```bash
-# 检查 PyTorch CUDA 支持
-python -c "import torch; print(torch.cuda.is_available())"
-```
-
-### 3. 网络接口识别
-
-部署时需要指定机器人网卡名称：
-```bash
-# Linux 查看网卡
-ifconfig
-
-# macOS 查看网卡
-networksetup -listallhardwareports
-```
+### TODO......
 
 ## 贡献指南
 
@@ -222,9 +195,9 @@ networksetup -listallhardwareports
 
 本项目基于以下优秀开源项目：
 
-- **[Legged Lab](https://github.com/Hellod035/LeggedLab)** - 提供了直接、透明的 IsaacLab 工作流，以及可复用的强化学习组件。Legged Lab 的代码组织和环境定义大大简化了我们的开发流程。
+- **[Legged Lab](https://github.com/Hellod035/LeggedLab)** - 提供了直接、透明的 IsaacLab 工作流，以及可复用的强化学习组件。Legged Lab 的代码组织和环境定义可无缝从 IsaacGym 迁移到IsaacLab。
 
-- **[天工开源框架 (TienKung-Lab)](https://github.com/Open-X-Humanoid/TienKung-Lab)** - 开源框架提供了高质量的足式机器人学习环境实现和最佳实践，为本项目的训练和验证奠定了坚实基础。
+- **[天工开源框架 (TienKung-Lab)](https://github.com/Open-X-Humanoid/TienKung-Lab)** - 开源框架提供了高质量的足式机器人学习环境实现和最佳实践。
 
 - **[IsaacLab](https://github.com/isaac-sim/IsaacLab)** - NVIDIA 官方的 Isaac Lab 提供了强大的仿真和强化学习工具。
 
